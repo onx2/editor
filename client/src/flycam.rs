@@ -56,7 +56,6 @@ impl Default for FlyCamSettings {
             // Keep zoom aligned with fly speed.
             // Tune this to taste: 0.1..0.35 is a reasonable range.
             scroll_zoom_speed_ratio: 0.25,
-            // Reasonable default for macOS trackpads / pixel-scrolling devices.
             // Higher values make trackpad zoom faster.
             trackpad_pixels_per_scroll: 1024.0,
             max_pitch_radians: 1.54, // ~88 degrees
@@ -111,7 +110,7 @@ fn flycam_toggle_capture(
 fn flycam_look(
     mut motion_evr: MessageReader<MouseMotion>,
     settings: Res<FlyCamSettings>,
-    mut q: Query<&mut Transform, With<FlyCam>>,
+    mut flycam_transform: Single<&mut Transform, With<FlyCam>>,
 ) {
     // Accumulate mouse delta for the frame.
     let mut delta = Vec2::ZERO;
@@ -128,37 +127,33 @@ fn flycam_look(
     let yaw_delta = -delta.x * settings.mouse_sensitivity;
     let pitch_delta = -delta.y * settings.mouse_sensitivity;
 
-    for mut transform in q.iter_mut() {
-        // Apply yaw around global up.
-        transform.rotate(Quat::from_axis_angle(Vec3::Y, yaw_delta));
+    // Apply yaw around global up.
+    flycam_transform.rotate(Quat::from_axis_angle(Vec3::Y, yaw_delta));
 
-        // Apply pitch around camera local right axis, clamped.
-        // Compute current pitch by projecting forward onto XZ plane.
-        let forward = transform.forward();
-        let current_pitch = forward.y.asin();
+    // Apply pitch around camera local right axis, clamped.
+    // Compute current pitch by projecting forward onto XZ plane.
+    let forward = flycam_transform.forward();
+    let current_pitch = forward.y.asin();
 
-        let target_pitch = (current_pitch + pitch_delta)
-            .clamp(-settings.max_pitch_radians, settings.max_pitch_radians);
+    let target_pitch = (current_pitch + pitch_delta)
+        .clamp(-settings.max_pitch_radians, settings.max_pitch_radians);
 
-        let clamped_delta = target_pitch - current_pitch;
+    let clamped_delta = target_pitch - current_pitch;
 
-        // Right axis in world space
-        let right = transform.right();
-        transform.rotate(Quat::from_axis_angle(*right, clamped_delta));
-    }
+    // Right axis in world space
+    let right = flycam_transform.right();
+    flycam_transform.rotate(Quat::from_axis_angle(*right, clamped_delta));
 }
 
 fn flycam_move(
     time: Res<Time>,
     keys: Res<ButtonInput<KeyCode>>,
     settings: Res<FlyCamSettings>,
-    mut q: Query<&mut Transform, With<FlyCam>>,
+    mut flycam_transform: Single<&mut Transform, With<FlyCam>>,
 ) {
-    let dt = time.delta_secs();
-
     let mut input = Vec3::ZERO;
 
-    // Planar movement (WASD) - only active while RMB is held (Unreal-style).
+    // Planar movement
     if keys.pressed(KeyCode::KeyW) {
         input.z += 1.0;
     }
@@ -172,7 +167,7 @@ fn flycam_move(
         input.x += 1.0;
     }
 
-    // Vertical movement: E up, Q down (Unreal-style).
+    // Vertical movement
     if keys.pressed(KeyCode::KeyE) {
         input.y += 1.0;
     }
@@ -184,26 +179,23 @@ fn flycam_move(
         return;
     }
 
+    let dt = time.delta_secs();
     let speed = settings.fly_speed;
 
-    for mut transform in q.iter_mut() {
-        // Move relative to camera orientation:
-        // - X: right
-        // - Z: forward (Bevy's `forward()` points in the direction the camera faces)
-        let mut wish_dir = Vec3::ZERO;
+    // Move relative to camera orientation
+    let mut desired_dir = Vec3::ZERO;
 
-        let right = *transform.right();
-        let forward = *transform.forward();
+    let right = *flycam_transform.right();
+    let forward = *flycam_transform.forward();
 
-        wish_dir += right * input.x;
-        wish_dir += Vec3::Y * input.y;
-        wish_dir += forward * input.z;
+    desired_dir += right * input.x;
+    desired_dir += Vec3::Y * input.y;
+    desired_dir += forward * input.z;
 
-        // Normalize to keep diagonal speed consistent
-        let wish_dir = wish_dir.normalize_or_zero();
+    // Keep diagonal speed consistent
+    let desired_dir = desired_dir.normalize_or_zero();
 
-        transform.translation += wish_dir * speed * dt;
-    }
+    flycam_transform.translation += desired_dir * speed * dt;
 }
 
 fn flycam_pan_is_active(buttons: Res<ButtonInput<MouseButton>>) -> bool {
@@ -213,7 +205,7 @@ fn flycam_pan_is_active(buttons: Res<ButtonInput<MouseButton>>) -> bool {
 fn flycam_pan(
     mut motion_evr: MessageReader<MouseMotion>,
     settings: Res<FlyCamSettings>,
-    mut q: Query<&mut Transform, With<FlyCam>>,
+    mut flycam_transform: Single<&mut Transform, With<FlyCam>>,
 ) {
     // Accumulate mouse delta for the frame.
     let mut delta = Vec2::ZERO;
@@ -224,61 +216,33 @@ fn flycam_pan(
         return;
     }
 
-    // Unreal-style pan: drag moves camera left/right/up/down in view space.
-    // We map:
+    // Drag moves camera left/right/up/down in view space:
     // - drag right => move right
     // - drag up => move up
     let pan_right = delta.x * settings.pan_sensitivity;
     let pan_up = -delta.y * settings.pan_sensitivity;
-
-    for mut transform in q.iter_mut() {
-        let right = *transform.right();
-        transform.translation += right * pan_right;
-        transform.translation += Vec3::Y * pan_up;
-    }
+    let right = *flycam_transform.right();
+    flycam_transform.translation += right * pan_right;
+    flycam_transform.translation += Vec3::Y * pan_up;
 }
 
 fn flycam_scroll_zoom(
-    time: Res<Time>,
     mut wheel_evr: MessageReader<MouseWheel>,
     settings: Res<FlyCamSettings>,
-    mut q: Query<&mut Transform, With<FlyCam>>,
+    mut flycam_transform: Single<&mut Transform, With<FlyCam>>,
 ) {
-    // Handle mouse wheel vs trackpad separately for consistent feel:
-    // - Wheels typically send `Line` units as discrete ticks.
-    // - Trackpads typically send `Pixel` units (continuous).
-    //
-    // NOTE: We intentionally do NOT scale pixel scroll by `dt`. Trackpads already provide
-    // high-frequency deltas, and `dt` scaling tends to make zoom feel unresponsive.
-    let _dt = time.delta_secs();
-
-    let mut amount = 0.0f32;
-
+    let forward = *flycam_transform.forward();
     for ev in wheel_evr.read() {
-        match ev.unit {
-            MouseScrollUnit::Line => {
-                // Discrete "ticks": treat `ev.y` as steps.
-                amount += ev.y * settings.fly_speed * settings.scroll_zoom_speed_ratio;
-            }
+        let amount = match ev.unit {
+            // Mouse scroll wheel's discrete "ticks": treat `ev.y` as steps
+            MouseScrollUnit::Line => ev.y * settings.fly_speed * settings.scroll_zoom_speed_ratio,
+            // Handle continous scrolling (trackpad, smooth wheel scroll), tuned using a damping constant
             MouseScrollUnit::Pixel => {
-                // Continuous pixel scroll (trackpads): normalize by a tunable constant.
-                //
-                // IMPORTANT:
-                // Trackpads often already encode "time" in the frequency/size of pixel scroll deltas.
-                // Multiplying by `dt` can make trackpad zoom feel extremely slow and also makes
-                // `trackpad_pixels_per_scroll` feel like it "does nothing".
                 let normalized = ev.y / settings.trackpad_pixels_per_scroll.max(1.0);
-                amount += normalized * settings.fly_speed * settings.scroll_zoom_speed_ratio;
+                normalized * settings.fly_speed * settings.scroll_zoom_speed_ratio
             }
-        }
-    }
+        };
 
-    if amount == 0.0 {
-        return;
-    }
-
-    for mut transform in q.iter_mut() {
-        let forward = *transform.forward();
-        transform.translation += forward * amount;
+        flycam_transform.translation += forward * amount;
     }
 }

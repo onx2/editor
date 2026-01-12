@@ -48,10 +48,13 @@ const Z_AXIS_COLOR: Color = Color::srgb(0.2, 0.2, 1.0);
 pub(super) fn plugin(app: &mut App) {
     app.init_resource::<InfiniteGridEnabled>();
     app.add_plugins(InfiniteGridPlugin);
+    app.add_systems(Startup, spawn_infinite_grid)
     app.add_systems(Update, toggle_grid_hotkey);
 }
 
-struct InfiniteGridPlugin;
+fn spawn_infinite_grid(mut commands: Commands) {
+    commands.spawn(infinite_grid::InfiniteGridBundle::default());
+}
 
 fn toggle_grid_hotkey(keys: Res<ButtonInput<KeyCode>>, mut enabled: ResMut<InfiniteGridEnabled>) {
     if keys.just_pressed(KeyCode::KeyG) {
@@ -59,6 +62,7 @@ fn toggle_grid_hotkey(keys: Res<ButtonInput<KeyCode>>, mut enabled: ResMut<Infin
     }
 }
 
+struct InfiniteGridPlugin;
 impl Plugin for InfiniteGridPlugin {
     fn build(&self, _app: &mut App) {}
 
