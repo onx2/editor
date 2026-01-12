@@ -2,83 +2,55 @@
 // Inspired by bevy_infinite_grid, adapted for editor usage in this repo.
 //
 // -----------------------------------------------------------------------------
-// BEGINNER-FRIENDLY OVERVIEW
+// OVERVIEW (read this first)
 // -----------------------------------------------------------------------------
 //
 // What this shader draws
 // ----------------------
-// This shader draws an "infinite" ground grid (like Unreal/Unity editors) on a
-// plane (usually the XZ plane at y=0). The grid is "infinite" because we do NOT
-// build a big mesh. Instead, we render a full-screen quad and, for each pixel,
-// we compute where that pixel's view-ray intersects the grid plane.
+// An editor-style "infinite" ground grid rendered on a plane (usually XZ at y=0).
+// There is no large grid mesh. Instead, we render a fullscreen quad and, per
+// pixel, compute where that pixel's camera ray intersects the grid plane.
 //
-// In other words:
-//   - Vertex shader: draws a fullscreen quad (4 vertices) and prepares two world
-//     points per pixel (near + far) so the fragment shader can build a ray.
-//   - Fragment shader: does ray-plane intersection to find the world position
-//     on the plane for this pixel, then procedurally evaluates grid lines.
+// Pipeline sketch
+// ---------------
+// - Vertex stage: emits a fullscreen quad and outputs two world-space points
+//   per vertex ("near" and "far") so the fragment stage can reconstruct a ray.
+// - Fragment stage: ray-plane intersection -> stable 2D plane coordinates ->
+//   procedural grid/axis evaluation (anti-aliased via derivatives).
 //
-// Why fullscreen quad?
-// --------------------
-// Rendering a big mesh grid leads to:
-//   - huge meshes or tiling
-//   - aliasing (shimmering) when far away
-//   - many triangles
+// Why a fullscreen quad?
+// ----------------------
+// Constant geometry cost (4 vertices), no tiling seams, and stable line thickness
+// via `fwidth(...)`-based anti-aliasing.
 //
-// This approach is:
-//   - constant geometry cost (always 4 vertices)
-//   - crisp lines via GPU derivative-based anti-aliasing (fwidth)
-//   - naturally "infinite" (limited only by depth/fade settings)
+// Coordinate spaces used below
+// ----------------------------
+// - Clip space: quad is authored directly in clip space (x,y in [-1,1]).
+// - View space: used for depth computation + distance fade.
+// - World space: ray-plane intersection and plane definition.
 //
-// Coordinate spaces (important mental model)
-// ------------------------------------------
-// You'll see several spaces used here:
+// Design choice: anchored 10m grid
+// --------------------------------
+// The 10m grid is an always-on "anchor" layer (baseline readability).
+// The 1m grid fades out as you move away from the plane.
+// The 100m grid fades in as you move far away from the plane.
+// This reduces clutter while preserving spatial reference.
 //
-// 1) Clip space (post-projection)
-//    - Coordinates in range x,y ∈ [-1, 1] after projection.
-//    - We render the quad directly in clip space.
-// 2) View space (camera space)
-//    - Camera at origin, looking down -Z in conventional setups.
-// 3) World space
-//    - Your actual scene coordinates (Bevy units; we treat 1.0 as 1 meter).
+// Naming conventions in this file
+// -------------------------------
+// Suffixes:
+// - `_world`   : world space
+// - `_view`    : view/camera space
+// - `_clip`    : clip space
+// - `_meters`  : conceptual meters (1 unit == 1m when `grid_settings.scale == 1`)
+// - `_scaled`  : after applying `grid_settings.scale`
 //
-// Bind groups / uniforms (how CPU talks to the shader)
-// ----------------------------------------------------
-// The Rust side sets up two bind groups:
-//
-// @group(0) @binding(0): View uniform
-//   - projection, inverse_projection
-//   - view, inverse_view
-//   - camera world_position
-//
-// @group(1) @binding(0): GridPlane uniform
-//   - plane origin, plane normal
-//   - planar rotation matrix used to get stable 2D plane coordinates
-//
-// @group(1) @binding(1): GridSettings uniform
-//   - scale and fade constants
-//   - axis colors
-//   - base grid color/alpha and axis alpha multiplier
-//
-// Entry points
-// ------------
-// - `@vertex fn vertex(...)`
-// - `@fragment fn fragment(...)`
-//
-// Naming conventions used in this file
-// ------------------------------------
-// This file avoids single-letter variable names (like r/o/n/t/d) except in
-// mathematical formulas shown in comments. In code, we use descriptive names:
-// - ray_origin_world, ray_direction_world
-// - plane_normal_world, plane_origin_world
-// - intersection_world_pos
-// - plane_local_coords_meters
-// - camera_height_above_plane_meters
-// - active_cell_size_a_meters, active_cell_size_b_meters
-// - active_weight_a, active_weight_b
+// Common terms:
+// - "coverage": 0..1 coverage of a line in the current pixel (anti-aliased mask)
+// - "weight"  : user/scale-driven multiplier applied to coverage
 //
 // -----------------------------------------------------------------------------
-// END BEGINNER-FRIENDLY OVERVIEW
+// END OVERVIEW
 // -----------------------------------------------------------------------------
 
 struct GridPlane {
@@ -144,33 +116,24 @@ struct GridSettings {
     x_axis_color: vec3<f32>,
     z_axis_color: vec3<f32>,
 
-    // Base grid line color + alpha.
-    //
-    // We still treat this as the "shared" base color, but we additionally apply a per-scale
-    // brightness multiplier in the shader so that:
-    //   1m < 10m < 100m
-    // (increasing brightness with increasing cell size).
     // grid_line_color:
     // ----------------
-    // Base grid line color used for ALL grid scales (1m/10m/100m).
+    // Shared grid line color used for all scales.
     //
-    // - RGB: the shared color (usually white-ish or light gray)
-    // - A:   base alpha before we apply:
-    //        - scale weights (based on camera height)
-    //        - per-scale brightness multiplier
+    // - RGB: line color (usually white-ish / light gray)
+    // - A  : base alpha (overall grid strength)
     //
-    // Per-scale brightness:
-    // ---------------------
-    // Even though RGB is shared, we make larger cell sizes visually brighter
-    // by multiplying alpha with a per-scale factor:
-    //   1m < 10m < 100m
+    // Per-scale visibility is controlled in the fragment shader by multiplying
+    // this base alpha by:
+    // - per-layer "coverage" (anti-aliased mask from `fwidth`)
+    // - per-layer "weight" (scale selection / fade in-out)
+    // - per-scale brightness multiplier (artistic tuning)
     grid_line_color: vec4<f32>,
 
-    // Axis line opacity multiplier (axis RGB comes from x_axis_color/z_axis_color).
     // axis_alpha:
     // -----------
-    // Multiplies axis line opacity (axis RGB comes from x_axis_color/z_axis_color).
-    // Axis lines are always visible; this controls how strong they are.
+    // Opacity multiplier for the axis lines.
+    // (Axis RGB comes from x_axis_color / z_axis_color; axis lines are always drawn.)
     axis_alpha: f32,
  };
 
@@ -211,52 +174,37 @@ struct View {
 fn bias_75_25(t: f32) -> f32 {
     // Crossfade bias helper
     // ---------------------
-    // We frequently crossfade between two grid scales (example: 1m and 10m).
-    // A standard crossfade uses:
-    //   w_a = 1 - t
-    //   w_b = t
-    // where t goes 0..1 as you move through the transition band.
+    // A plain crossfade uses weights (1 - t) and t, which yields a 50/50 blend at
+    // t=0.5. For grids this often looks too "busy" because two line sets are
+    // equally strong.
     //
-    // That gives a 50/50 blend at t=0.5, which can look "busy" because both
-    // grids are equally strong.
-    //
-    // This function biases t so the currently-dominant grid stays dominant
-    // longer. Squaring is a simple bias:
+    // We bias the blend so one layer stays dominant longer:
     //   t' = t^2
-    // so:
-    //   t=0.5 -> t'=0.25  (=> 75/25 instead of 50/50)
-    //
-    // Note: This does not change endpoints: 0 stays 0 and 1 stays 1.
-    //
-    // If you want the opposite bias (favor the larger scale earlier), you can
-    // use something like: t' = 1 - (1 - t)^2
+    // This keeps endpoints (0 and 1) unchanged but shifts the midpoint:
+    //   t=0.5 -> t'=0.25  (75/25 instead of 50/50)
     return t * t;
  }
 
 fn grid_brightness(cell_m: f32) -> f32 {
-    // Per-scale brightness helper
-    // ---------------------------
-    // We want larger grid cells to be visually stronger so that when you zoom
-    // out (camera higher above the plane), the coarser grid remains readable.
+    // Per-scale alpha multiplier
+    // --------------------------
+    // Multiplies the *alpha* contribution of a layer based on its cell size.
+    // This is purely an artistic tuning knob (not physically based).
     //
-    // This function returns a multiplier applied to *alpha* (opacity).
+    // Note: This is separate from "which layers are active" (weights). We use:
+    // - weights: decide when a layer should appear/disappear (based on camera height)
+    // - brightness: relative strength between 1m/10m/100m when they are present
     //
-    // Why alpha and not RGB?
-    // - Because we want a "shared" grid color but different visibility.
-    // - Alpha-based changes preserve the hue (white/gray stays white/gray).
-    //
-    // cell_m is "meters per cell" (cell size):
-    // - 1.0  = 1m
-    // - 10.0 = 10m
-    // - 100.0 = 100m
-    //
-    // These constants are artistic knobs. Increase them if the grid is too faint.
+    // Anchored-grid intent:
+    // - 10m should read clearly as the always-on baseline.
+    // - 1m is detail (can be weaker).
+    // - 100m is context (can be weaker than 10m but still readable when enabled).
     if cell_m <= 1.0 {
-        return 0.55;
+        return 0.40;
     } else if cell_m <= 10.0 {
-        return 0.75;
+        return 1.00;
     } else {
-        return 0.85;
+        return 0.75;
     }
  }
 
@@ -270,21 +218,16 @@ struct VertexInput {
 };
 
 fn unproject_point(clip_xyz: vec3<f32>) -> vec3<f32> {
-    // Unprojection / ray reconstruction helper
-    // ----------------------------------------
-    // clip_xyz is in clip space:
-    //   x, y in [-1, 1] cover the viewport
-    //   z is a chosen depth value (we'll use 1.0-ish for near and 0.001-ish for far)
+    // Clip -> world helper used for ray reconstruction
+    // ------------------------------------------------
+    // Given a clip-space position (x,y in [-1,1], z chosen by us), return the
+    // corresponding world-space position.
     //
-    // We want to reconstruct a world-space ray for each pixel.
-    // A common way:
-    //   1) Convert from clip space back into view space using inverse_projection.
-    //   2) Convert from view space into world space.
+    // We use two z values later ("near-ish" and "far-ish") to form a ray
+    // direction per pixel.
     //
-    // In this codebase we follow the conventions from bevy_infinite_grid where:
-    //   - view.view and view.inverse_projection are arranged to produce a stable world point.
-    //
-    // After multiplying, we divide by w to get a proper 3D point (perspective divide).
+    // Note: The specific matrix order here matches what Bevy provides for this
+    // pipeline (and what bevy_infinite_grid uses).
     let unprojected = view.view * view.inverse_projection * vec4<f32>(clip_xyz, 1.0);
     return unprojected.xyz / unprojected.w;
  }
@@ -297,24 +240,19 @@ struct VertexOutput {
 
 @vertex
 fn vertex(vertex_input: VertexInput) -> VertexOutput {
-    // Vertex shader: fullscreen quad + per-pixel ray endpoints
-    // --------------------------------------------------------
+    // Fullscreen quad vertex stage
+    // ----------------------------
+    // Emits a clip-space quad (triangle strip, 4 vertices) and provides two
+    // world-space points per vertex so the fragment stage can reconstruct a ray.
     //
-    // We render exactly 4 vertices using a triangle strip. The geometry is a
-    // fullscreen quad expressed directly in CLIP SPACE, so it covers the whole
-    // screen regardless of camera.
+    // Quad corners in clip space (triangle strip order):
+    //  0: (-1,-1)  1: (-1, 1)  2: ( 1,-1)  3: ( 1, 1)
     //
-    // Fullscreen quad corners (triangle strip order):
-    //   0: (-1,-1) bottom-left
-    //   1: (-1, 1) top-left
-    //   2: ( 1,-1) bottom-right
-    //   3: ( 1, 1) top-right
-    //
-    // Clip space Z:
-    // -------------
-    // We set z=1.0 for the base point we rasterize, and we unproject a second
-    // point at a smaller z (0.001) to get a stable "far-ish" point. Together,
-    // these two points define a world-space ray for the current pixel.
+    // We intentionally pick two clip-space Z values:
+    // - z = 1.0   : "near-ish" endpoint
+    // - z = 0.001 : "far-ish" endpoint
+    // The exact values are not magical; they just need to be distinct and stable
+    // so `normalize(far - near)` produces a consistent ray direction.
     var clip_space_corners = array<vec3<f32>, 4>(
         vec3<f32>(-1.0, -1.0, 1.0),
         vec3<f32>(-1.0,  1.0, 1.0),
@@ -325,22 +263,9 @@ fn vertex(vertex_input: VertexInput) -> VertexOutput {
     let clip_space_corner_xyz = clip_space_corners[vertex_input.index];
 
     var vertex_output: VertexOutput;
-
-    // This is the actual position the GPU uses to rasterize the quad.
     vertex_output.clip_position = vec4<f32>(clip_space_corner_xyz, 1.0);
 
-    // Compute two world-space points for this pixel:
-    // - near_point_world: unproject at z=1.0 (stable near endpoint)
-    // - far_point_world:  unproject at z=0.001 (stable far-ish endpoint)
-    //
-    // In the fragment shader we build:
-    //   ray_origin_world = near_point_world
-    //   ray_direction_world = normalize(far_point_world - near_point_world)
     vertex_output.near_point = unproject_point(clip_space_corner_xyz);
-
-    // 0.001 is a stable "far-ish" depth value used by bevy_infinite_grid. It does not
-    // literally correspond to the camera's far plane; it is simply used to derive a
-    // direction vector that points outward through the pixel.
     vertex_output.far_point = unproject_point(vec3<f32>(clip_space_corner_xyz.xy, 0.001));
     return vertex_output;
 }
@@ -422,29 +347,23 @@ fn fragment(vertex_output: VertexOutput) -> FragmentOutput {
     let planar_offset_world = intersection_world_pos - plane_origin_world;
     let plane_local_coords_meters = (grid_plane.planar_rotation_matrix * planar_offset_world).xz;
 
-    // Step 5: Compute depth
-    // ---------------------
-    // We output custom fragment depth so the grid participates in the depth buffer
-    // like real geometry (so objects can occlude the grid).
+    // Step 5: Compute depth for the intersection point
+    // ------------------------------------------------
+    // We output custom fragment depth so the grid is depth-tested like real geometry
+    // (so scene objects can occlude it).
     //
-    // Bevy 3D uses reversed-Z: larger depth values are closer.
-    // The render pipeline uses CompareFunction::Greater accordingly.
-    // Step 5: Compute depth for the grid plane intersection
-    // -----------------------------------------------------
-    // We output a custom depth so the grid participates in depth-testing like a real mesh.
+    // Steps:
+    // - world -> view -> clip
+    // - depth = clip.z / clip.w
     //
-    // Process:
-    // - Convert the world-space intersection into view space.
-    // - Project it into clip space.
-    // - Convert to normalized clip depth (z / w).
-    //
-    // Bevy 3D uses reversed-Z by default, and the pipeline is configured accordingly.
+    // Note: Bevy commonly uses reversed-Z in its 3D pipelines, so "near/far" behavior
+    // depends on the pipeline state. Here we just output the projected clip depth.
     let intersection_view_space = view.inverse_view * vec4<f32>(intersection_world_pos, 1.0);
     let intersection_clip_space = view.projection * intersection_view_space;
     let clip_depth = intersection_clip_space.z / intersection_clip_space.w;
 
-    // real_depth is distance along the view direction (used for distance fading).
-    let real_depth = -intersection_view_space.z;
+    // View-space distance along -Z (used for distance-based fading).
+    let view_space_depth = -intersection_view_space.z;
 
     // Procedural grid evaluation.
     //
@@ -492,58 +411,42 @@ fn fragment(vertex_output: VertexOutput) -> FragmentOutput {
         step(axis_distance_metric.x, axis_distance_metric.y)
     );
 
-    // Step 7: Choose which grid scale(s) to show based on camera height
-    // ---------------------------------------------------------------
-    // We use camera distance to the plane as a simple "zoom level" proxy.
-    // For the ground plane at y=0, this is approximately abs(camera_y).
+    // Step 7: Select grid layers based on camera height
+    // -------------------------------------------------
+    // We use camera height above the plane as a simple proxy for "zoom level".
+    // Close to the plane: show detail (1m).
+    // Far from the plane: show context (100m).
     //
-    // Why this works:
-    // - When you're close to the plane, you want the standard 1m grid.
-    // - When you're far away, the 1m grid becomes too dense/noisy, so we switch to coarser grids.
-    // Camera height above the plane is our "zoom level" proxy.
-    // For a y=0 plane, this is approximately abs(camera_y).
+    // The 10m grid is always shown as an "anchor" layer for readability.
     let camera_height_above_plane_meters = abs(view.world_position.y - intersection_world_pos.y);
 
-    // Transition bands (tunable artistic knobs):
-    // ------------------------------------------
-    // We crossfade between adjacent scales across wide height ranges:
-    //   1m  -> 10m   between 5m and 90m
-    //   10m -> 100m  between 40m and 600m
-    //
-    // Only TWO scales are active at any time (the pair we're currently crossfading).
-    // That reduces visual clutter.
-    //
-    // active_weight_a / active_weight_b are the crossfade weights for the two active scales.
-    // active_cell_size_a_meters / active_cell_size_b_meters are the corresponding cell sizes.
-    var active_weight_a = 0.0;
-    var active_weight_b = 0.0;
-    var active_cell_size_a_meters = 1.0;
-    var active_cell_size_b_meters = 10.0;
+    // Layer selection outputs:
+    // - `primary_*`  : always-on layer (10m)
+    // - `secondary_*`: fades in/out (1m when close, 100m when far)
+    var primary_layer_weight = 0.0;
+    var secondary_layer_weight = 0.0;
+    var primary_cell_size_meters = 10.0;
+    var secondary_cell_size_meters = 1.0;
 
-    // Pick the active pair and weights:
-    // -------------------------------
-    // We pick (cell_a, cell_b) as adjacent scales and compute weights (w_a, w_b).
+    // Tuning knobs:
+    // - `smoothstep(a,b,h)` returns 0..1 as `h` moves from `a` to `b`.
+    // - `bias_75_25` reduces the "both equally visible" look around the midpoint.
     //
-    // `smoothstep(edge0, edge1, h)` returns a smooth 0..1 transition:
-    // - 0 when h <= edge0
-    // - 1 when h >= edge1
-    // - smooth curve in between
-    //
-    // Then we bias it with bias_75_25 to avoid a 50/50 blend (which looks too busy).
-    if camera_height_above_plane_meters < 90.0 {
-        // Active pair: 1m -> 10m
-        let transition_1m_to_10m = bias_75_25(smoothstep(5.0, 90.0, camera_height_above_plane_meters));
-        active_weight_a = 1.0 - transition_1m_to_10m; // 1m
-        active_weight_b = transition_1m_to_10m;       // 10m
-        active_cell_size_a_meters = 1.0;
-        active_cell_size_b_meters = 10.0;
+    // Note: weights do not need to sum to 1.0 because 10m is intentionally always present.
+    if camera_height_above_plane_meters < 120.0 {
+        // Close: fade OUT 1m detail as you move away from the plane.
+        let fade_out_1m = bias_75_25(smoothstep(2.0, 120.0, camera_height_above_plane_meters));
+        primary_layer_weight = 1.0;             // 10m always on
+        secondary_layer_weight = 1.0 - fade_out_1m;
+        primary_cell_size_meters = 10.0;
+        secondary_cell_size_meters = 1.0;
     } else {
-        // Active pair: 10m -> 100m
-        let transition_10m_to_100m = bias_75_25(smoothstep(40.0, 600.0, camera_height_above_plane_meters));
-        active_weight_a = 1.0 - transition_10m_to_100m; // 10m
-        active_weight_b = transition_10m_to_100m;       // 100m
-        active_cell_size_a_meters = 10.0;
-        active_cell_size_b_meters = 100.0;
+        // Far: fade IN 100m context as you move away from the plane.
+        let fade_in_100m = bias_75_25(smoothstep(120.0, 600.0, camera_height_above_plane_meters));
+        primary_layer_weight = 1.0;             // 10m always on
+        secondary_layer_weight = fade_in_100m;
+        primary_cell_size_meters = 10.0;
+        secondary_cell_size_meters = 100.0;
     }
 
     // Step 8: Procedurally evaluate grid lines (anti-aliased)
@@ -570,17 +473,22 @@ fn fragment(vertex_output: VertexOutput) -> FragmentOutput {
     //
     // Finally, we compute a coverage-like alpha:
     //   1.0 near the line, 0.0 away from it.
-    let grid_coords_a = plane_local_coords_scaled / active_cell_size_a_meters;
-    let grid_coords_a_fwidth = fwidth(grid_coords_a);
-    let grid_coords_a_distance_to_line = abs(fract(grid_coords_a - 0.5) - 0.5) / grid_coords_a_fwidth;
-    let grid_coords_a_nearest_line_metric = min(grid_coords_a_distance_to_line.x, grid_coords_a_distance_to_line.y);
-    let grid_layer_a_coverage = clamp(1.0 - min(grid_coords_a_nearest_line_metric, 1.0), 0.0, 1.0) * active_weight_a;
+    // Evaluate the two active layers using the same procedure, just different cell sizes.
+    // Terminology:
+    // - `grid_coords`: plane coords expressed in "cells" (meters / cell_size)
+    // - `distance_to_line`: ~0 near a line, ~1 away (normalized by `fwidth` for AA)
+    // - `coverage`: 0..1 line coverage for this pixel
+    let primary_grid_coords = plane_local_coords_scaled / primary_cell_size_meters;
+    let primary_grid_coords_fwidth = fwidth(primary_grid_coords);
+    let primary_distance_to_line = abs(fract(primary_grid_coords - 0.5) - 0.5) / primary_grid_coords_fwidth;
+    let primary_nearest_line_metric = min(primary_distance_to_line.x, primary_distance_to_line.y);
+    let primary_layer_coverage = clamp(1.0 - min(primary_nearest_line_metric, 1.0), 0.0, 1.0) * primary_layer_weight;
 
-    let grid_coords_b = plane_local_coords_scaled / active_cell_size_b_meters;
-    let grid_coords_b_fwidth = fwidth(grid_coords_b);
-    let grid_coords_b_distance_to_line = abs(fract(grid_coords_b - 0.5) - 0.5) / grid_coords_b_fwidth;
-    let grid_coords_b_nearest_line_metric = min(grid_coords_b_distance_to_line.x, grid_coords_b_distance_to_line.y);
-    let grid_layer_b_coverage = clamp(1.0 - min(grid_coords_b_nearest_line_metric, 1.0), 0.0, 1.0) * active_weight_b;
+    let secondary_grid_coords = plane_local_coords_scaled / secondary_cell_size_meters;
+    let secondary_grid_coords_fwidth = fwidth(secondary_grid_coords);
+    let secondary_distance_to_line = abs(fract(secondary_grid_coords - 0.5) - 0.5) / secondary_grid_coords_fwidth;
+    let secondary_nearest_line_metric = min(secondary_distance_to_line.x, secondary_distance_to_line.y);
+    let secondary_layer_coverage = clamp(1.0 - min(secondary_nearest_line_metric, 1.0), 0.0, 1.0) * secondary_layer_weight;
 
     // Step 9: Apply style knobs (base alpha + per-scale brightness)
     // ------------------------------------------------------------
@@ -598,10 +506,14 @@ fn fragment(vertex_output: VertexOutput) -> FragmentOutput {
     // If the grid is too faint overall:
     // - Increase grid_settings.grid_line_color.a on the CPU side
     // - Or increase the constants returned by grid_brightness(...)
-    let brightness_multiplier_a = grid_brightness(active_cell_size_a_meters);
-    let brightness_multiplier_b = grid_brightness(active_cell_size_b_meters);
-    let grid_layer_a_alpha = grid_layer_a_coverage * grid_settings.grid_line_color.a * brightness_multiplier_a;
-    let grid_layer_b_alpha = grid_layer_b_coverage * grid_settings.grid_line_color.a * brightness_multiplier_b;
+    let primary_brightness = grid_brightness(primary_cell_size_meters);
+    let secondary_brightness = grid_brightness(secondary_cell_size_meters);
+
+    let primary_layer_alpha =
+        primary_layer_coverage * grid_settings.grid_line_color.a * primary_brightness;
+
+    let secondary_layer_alpha =
+        secondary_layer_coverage * grid_settings.grid_line_color.a * secondary_brightness;
 
     // Step 10: Fade out the grid to avoid harsh edges / aliasing
     // ---------------------------------------------------------
@@ -620,7 +532,7 @@ fn fragment(vertex_output: VertexOutput) -> FragmentOutput {
     //
     // dot_fade is 1 when looking straight down at the plane,
     // and approaches 0 when looking along the plane.
-    let dist_fade = min(1.0, 1.0 - grid_settings.dist_fadeout_const * real_depth);
+    let dist_fade = min(1.0, 1.0 - grid_settings.dist_fadeout_const * view_space_depth);
     let dot_fade = abs(dot(plane_normal_world, normalize(view.world_position - intersection_world_pos)));
     let fade = mix(dist_fade, 1.0, dot_fade) * min(grid_settings.dot_fadeout_const * dot_fade, 1.0);
 
@@ -630,20 +542,21 @@ fn fragment(vertex_output: VertexOutput) -> FragmentOutput {
     // So we mask grid alpha where the axis is present:
     //   grid_masked = grid_alpha * (1 - axis_alpha)
     let axis_mask = clamp(axis_alpha_coverage, 0.0, 1.0);
-    let grid_layer_a_alpha_masked_by_axis = grid_layer_a_alpha * (1.0 - axis_mask);
-    let grid_layer_b_alpha_masked_by_axis = grid_layer_b_alpha * (1.0 - axis_mask);
+    let primary_layer_alpha_masked_by_axis = primary_layer_alpha * (1.0 - axis_mask);
+    let secondary_layer_alpha_masked_by_axis = secondary_layer_alpha * (1.0 - axis_mask);
 
-    // Combine alphas for output and apply fade (distance/angle).
-    // clamp to [0..1] because alpha is a coverage-like value.
-    let alpha_out = clamp((axis_alpha_coverage + grid_layer_a_alpha_masked_by_axis + grid_layer_b_alpha_masked_by_axis) * fade, 0.0, 1.0);
+    // Final alpha is the sum of contributors, then faded by distance/angle.
+    let alpha_out = clamp(
+        (axis_alpha_coverage + primary_layer_alpha_masked_by_axis + secondary_layer_alpha_masked_by_axis) * fade,
+        0.0,
+        1.0
+    );
 
-    // Compute RGB contribution:
-    // - Axis uses its own RGB (red/blue), scaled by its alpha coverage
-    // - Grid uses shared RGB, scaled by each layer's alpha (masked by axis)
+    // RGB is "pre-multiplied-ish": each term is already scaled by its coverage/alpha.
     let rgb =
         axis_color * axis_alpha_coverage +
-        grid_settings.grid_line_color.rgb * grid_layer_a_alpha_masked_by_axis +
-        grid_settings.grid_line_color.rgb * grid_layer_b_alpha_masked_by_axis;
+        grid_settings.grid_line_color.rgb * primary_layer_alpha_masked_by_axis +
+        grid_settings.grid_line_color.rgb * secondary_layer_alpha_masked_by_axis;
 
     // Final output:
     // - out.depth: custom depth so the grid is depth-tested like real geometry
