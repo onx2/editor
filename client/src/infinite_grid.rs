@@ -192,25 +192,47 @@ struct GridPlaneUniform {
 
 #[derive(Debug, ShaderType)]
 struct GridDisplaySettingsUniform {
+    // WGSL expects this exact layout (see `assets/shaders/infinite_grid.wgsl`):
+    // struct GridSettings {
+    //   scale: f32,
+    //   dist_fadeout_const: f32,
+    //   dot_fadeout_const: f32,
+    //   x_axis_color: vec3,
+    //   z_axis_color: vec3,
+    //   grid_line_color: vec4,
+    //   axis_alpha: f32,
+    // }
+    //
+    // If this struct's fields don't match the WGSL struct, the shader will read garbage
+    // and the grid can disappear entirely.
     scale: f32,
+    // 1 / fadeout_distance
     dist_fadeout_const: f32,
+    // 1 / dot_fadeout_strength (keep in sync with WGSL)
     dot_fadeout_const: f32,
     x_axis_color: Vec3,
     z_axis_color: Vec3,
-    minor_line_color: Vec4,
-    major_line_color: Vec4,
+    // Shared grid line color (RGB) + base alpha. All grid scales use this; opacity is scale-weighted in WGSL.
+    grid_line_color: Vec4,
+    // Axis opacity multiplier; axis RGB comes from x_axis_color/z_axis_color.
+    axis_alpha: f32,
 }
 
 impl GridDisplaySettingsUniform {
     fn from_settings(settings: &InfiniteGridSettings) -> Self {
         Self {
+            // 1m == 1 Bevy unit, so scale is just 1.0.
             scale: 1.0,
             dist_fadeout_const: 1.0 / settings.fadeout_distance.max(0.0001),
+            // Keep the existing WGSL behavior: angle-based fade factor.
             dot_fadeout_const: 1.0 / 0.25,
             x_axis_color: X_AXIS_COLOR.to_linear().to_vec3(),
             z_axis_color: Z_AXIS_COLOR.to_linear().to_vec3(),
-            minor_line_color: LinearRgba::new(0.10, 0.10, 0.10, settings.minor_alpha).to_vec4(),
-            major_line_color: LinearRgba::new(0.25, 0.25, 0.25, settings.major_alpha).to_vec4(),
+            // "Shared" grid line color. Make it brighter than before; opacity is controlled by the WGSL weights.
+            // Use the previous major/minor alphas as a reasonable base.
+            grid_line_color: LinearRgba::new(1.0, 1.0, 1.0, settings.major_alpha.max(settings.minor_alpha)).to_vec4(),
+            // Always show axes; you can tune this if they feel too strong.
+            axis_alpha: 1.0,
         }
     }
 }
