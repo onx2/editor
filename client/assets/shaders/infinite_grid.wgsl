@@ -200,9 +200,9 @@ fn grid_brightness(cell_m: f32) -> f32 {
     // - 1m is detail (can be weaker).
     // - 100m is context (can be weaker than 10m but still readable when enabled).
     if cell_m <= 1.0 {
-        return 0.40;
+        return 0.45;
     } else if cell_m <= 10.0 {
-        return 1.00;
+        return 0.6;
     } else {
         return 0.75;
     }
