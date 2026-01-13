@@ -1,28 +1,66 @@
 use crate::primitives::Vec3;
 
-#[derive(spacetimedb::SpacetimeType, Debug, Default, Clone, Copy)]
-pub struct CapsuleYData {
-    half_height: f32,
-    radius: f32,
+/// A line segment shape.
+/// A segment is the simplest 1D shape, defined by two endpoints. It represents a straight line between two points with no thickness or volume.
+#[derive(spacetimedb::SpacetimeType, Clone, Copy, Default, Debug, PartialEq)]
+pub struct Segment {
+    pub a: Vec3,
+    pub b: Vec3,
 }
 
-#[derive(spacetimedb::SpacetimeType, Debug, Default, Clone)]
-pub struct HeightfieldData {
+/// A capsule shape, also known as a pill or capped cylinder.
+#[derive(spacetimedb::SpacetimeType, Debug, Default, Clone, Copy, PartialEq)]
+pub struct Capsule {
+    pub segment: Segment,
+    pub radius: f32,
+}
+
+/// A 3D heightfield
+#[derive(spacetimedb::SpacetimeType, Debug, Default, Clone, PartialEq)]
+pub struct Heightfield {
     width: u32,
     height: u32,
     heights: Vec<f32>,
     scale: Vec3,
 }
 
-#[derive(spacetimedb::SpacetimeType, Debug, Clone)]
+/// A cuboid shape, also known as a box or rectangle.
+#[derive(spacetimedb::SpacetimeType, Clone, Copy, Default, Debug, PartialEq)]
+pub struct Cuboid {
+    half_extents: Vec3,
+}
+
+/// A ball shape, also known as a sphere in 3D or a circle in 2D.
+#[derive(spacetimedb::SpacetimeType, Clone, Copy, Default, Debug, PartialEq)]
+pub struct Ball {
+    radius: f32,
+}
+
+#[derive(spacetimedb::SpacetimeType, Clone, Copy, Default, Debug, PartialEq, Eq)]
+pub struct Triangle {
+    pub v1: u32,
+    pub v2: u32,
+    pub v3: u32,
+}
+
+#[derive(spacetimedb::SpacetimeType, Clone, Default, Debug, PartialEq)]
+pub struct ConvexHull {
+    /// Point cloud
+    points: Vec<Vec3>,
+    /// Triangles that form the hull
+    pub indices: Vec<Triangle>,
+}
+
+#[derive(spacetimedb::SpacetimeType, Debug, Clone, PartialEq)]
 pub enum CollisionShape {
     None,
-    Box { half_extents: Vec3 },
-    Sphere { radius: f32 },
-    CapsuleY(CapsuleYData),
-    Heightfield(HeightfieldData),
-    ConvexHull { points: Vec<Vec3> },
+    Cuboid(Cuboid),
+    Ball(Ball),
+    Capsule(Capsule),
+    Heightfield(Heightfield),
+    ConvexHull(ConvexHull),
 }
+
 impl Default for CollisionShape {
     fn default() -> Self {
         Self::None

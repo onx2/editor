@@ -48,10 +48,8 @@ const Z_AXIS_COLOR: Color = Color::srgb(0.2, 0.2, 1.0);
 pub(super) fn plugin(app: &mut App) {
     app.init_resource::<InfiniteGridEnabled>();
     app.add_plugins(InfiniteGridPlugin);
-    app.add_systems(Startup, spawn_infinite_grid);
-    app.add_systems(Update, toggle_grid_hotkey);
-    app.add_systems(Startup, spawn_grid_scale_overlay);
-    app.add_systems(Update, update_grid_scale_overlay);
+    app.add_systems(Startup, (spawn_infinite_grid, spawn_grid_scale_overlay));
+    app.add_systems(Update, (toggle_grid_hotkey, update_grid_scale_overlay));
 }
 
 fn spawn_infinite_grid(mut commands: Commands) {
