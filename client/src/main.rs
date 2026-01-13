@@ -1,7 +1,7 @@
 mod flycam;
 mod fps_overlay;
 mod infinite_grid;
-mod window;
+mod ui;
 
 use bevy::prelude::*;
 
@@ -9,7 +9,7 @@ fn main() {
     App::new()
         .add_plugins((
             DefaultPlugins,
-            window::plugin,
+            ui::plugin,
             infinite_grid::plugin,
             flycam::plugin,
             fps_overlay::plugin,

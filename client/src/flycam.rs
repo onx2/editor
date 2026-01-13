@@ -67,6 +67,7 @@ impl Default for FlyCamSettings {
 const CAMERA_OFFSET_GLOBAL: Vec3 = Vec3::new(0.0, 25.0, -10.0);
 
 fn spawn_camera(mut commands: Commands) {
+    // World camera
     commands.spawn((
         FlyCam,
         Camera3d::default(),
