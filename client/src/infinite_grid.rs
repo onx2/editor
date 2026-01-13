@@ -31,6 +31,8 @@ use bevy::{
 };
 use std::borrow::Cow;
 
+use crate::flycam::FlyCam;
+
 #[derive(Resource, Copy, Clone, Debug)]
 pub struct InfiniteGridEnabled(pub bool);
 
@@ -701,18 +703,11 @@ fn spawn_grid_scale_overlay(mut commands: Commands) {
 }
 
 fn update_grid_scale_overlay(
-    mut q_text: Query<&mut Text, With<GridScaleOverlay>>,
-    q_cam: Query<&GlobalTransform, With<Camera3d>>,
+    mut q_text: Single<&mut Text, With<GridScaleOverlay>>,
+    flycam_transform: Single<&GlobalTransform, With<FlyCam>>,
 ) {
-    let Ok(mut text) = q_text.single_mut() else {
-        return;
-    };
-    let Ok(cam_gt) = q_cam.single() else {
-        return;
-    };
-
     // Plane is y=0 in this editor.
-    let h = cam_gt.translation().y.abs();
+    let h = flycam_transform.translation().y.abs();
     fn smoothstep(edge0: f32, edge1: f32, x: f32) -> f32 {
         let t = ((x - edge0) / (edge1 - edge0)).clamp(0.0, 1.0);
         t * t * (3.0 - 2.0 * t)
@@ -734,5 +729,5 @@ fn update_grid_scale_overlay(
         if t >= dominance_cutoff { "100m" } else { "10m" }
     };
 
-    text.0 = format!("Grid: {}", scale_label);
+    q_text.0 = format!("Grid: {}", scale_label);
 }

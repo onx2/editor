@@ -5,6 +5,7 @@ use collision_shape::CollisionShape;
 use primitives::{Quat, Vec3};
 use spacetimedb::ReducerContext;
 
+/// The stored reference to an object that exists in the world.
 #[spacetimedb::table(name = world_objects)]
 pub struct WorldObject {
     #[primary_key]
