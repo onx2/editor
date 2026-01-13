@@ -50,6 +50,8 @@ pub(super) fn plugin(app: &mut App) {
     app.add_plugins(InfiniteGridPlugin);
     app.add_systems(Startup, spawn_infinite_grid);
     app.add_systems(Update, toggle_grid_hotkey);
+    app.add_systems(Startup, spawn_grid_scale_overlay);
+    app.add_systems(Update, update_grid_scale_overlay);
 }
 
 fn spawn_infinite_grid(mut commands: Commands) {
@@ -230,7 +232,13 @@ impl GridDisplaySettingsUniform {
             z_axis_color: Z_AXIS_COLOR.to_linear().to_vec3(),
             // "Shared" grid line color. Make it brighter than before; opacity is controlled by the WGSL weights.
             // Use the previous major/minor alphas as a reasonable base.
-            grid_line_color: LinearRgba::new(1.0, 1.0, 1.0, settings.major_alpha.max(settings.minor_alpha)).to_vec4(),
+            grid_line_color: LinearRgba::new(
+                1.0,
+                1.0,
+                1.0,
+                settings.major_alpha.max(settings.minor_alpha),
+            )
+            .to_vec4(),
             // Always show axes; you can tune this if they feel too strong.
             axis_alpha: 1.0,
         }
@@ -671,4 +679,62 @@ fn queue_grids(
             });
         }
     }
+}
+
+#[derive(Component)]
+struct GridScaleOverlay;
+
+fn spawn_grid_scale_overlay(mut commands: Commands) {
+    commands.spawn((
+        GridScaleOverlay,
+        Text::new("Grid: ?"),
+        TextFont {
+            font_size: 14.0,
+            ..default()
+        },
+        TextColor(Color::srgb(0.92, 0.92, 0.92)),
+        Node {
+            position_type: PositionType::Absolute,
+            left: Val::Px(12.0),
+            bottom: Val::Px(12.0),
+            ..default()
+        },
+    ));
+}
+
+fn update_grid_scale_overlay(
+    mut q_text: Query<&mut Text, With<GridScaleOverlay>>,
+    q_cam: Query<&GlobalTransform, With<Camera3d>>,
+) {
+    let Ok(mut text) = q_text.single_mut() else {
+        return;
+    };
+    let Ok(cam_gt) = q_cam.single() else {
+        return;
+    };
+
+    // Plane is y=0 in this editor.
+    let h = cam_gt.translation().y.abs();
+    fn smoothstep(edge0: f32, edge1: f32, x: f32) -> f32 {
+        let t = ((x - edge0) / (edge1 - edge0)).clamp(0.0, 1.0);
+        t * t * (3.0 - 2.0 * t)
+    }
+
+    // Shader bias: t' = t^2
+    fn bias_75_25(t: f32) -> f32 {
+        t * t
+    }
+
+    // Dominance cutoff: show the "next" scale only when it is >= ~75%.
+    let dominance_cutoff = 0.75;
+
+    let scale_label = if h < 90.0 {
+        let t = bias_75_25(smoothstep(5.0, 90.0, h));
+        if t >= dominance_cutoff { "10m" } else { "1m" }
+    } else {
+        let t = bias_75_25(smoothstep(40.0, 600.0, h));
+        if t >= dominance_cutoff { "100m" } else { "10m" }
+    };
+
+    text.0 = format!("Grid: {}", scale_label);
 }
