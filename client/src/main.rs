@@ -1,5 +1,4 @@
 mod flycam;
-mod fps_overlay;
 mod infinite_grid;
 mod ui;
 
@@ -12,7 +11,6 @@ fn main() {
             ui::plugin,
             infinite_grid::plugin,
             flycam::plugin,
-            fps_overlay::plugin,
         ))
         .run();
 }

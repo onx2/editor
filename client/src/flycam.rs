@@ -91,8 +91,6 @@ fn flycam_toggle_capture(
         return;
     }
 
-    // In Bevy 0.17, cursor state is stored on the `CursorOptions` component (required by `Window`).
-    // Grab/release cursor when RMB is pressed/released.
     let Ok(mut cursor) = cursor_q.single_mut() else {
         return;
     };
