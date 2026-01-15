@@ -7,21 +7,46 @@ use bevy::{
     },
     time::Time,
 };
+
 use bevy_egui::{EguiContexts, EguiPrimaryContextPass, egui};
+
 use core::time::Duration;
 
 const FPS_HISTORY_LEN: usize = 250;
 const PERF_WINDOW_REFRESH_INTERVAL: Duration = Duration::from_millis(100);
 
-// Flame graph tuning.
+// Frame-time graph tuning.
 const FLAME_GRAPH_HEIGHT_PX: f32 = 60.0;
 const FLAME_GRAPH_BAR_GAP_PX: f32 = 1.0;
 
-// Fixed flame-graph vertical scale (0..MAX_MS).
-const FLAME_GRAPH_MAX_MS: f32 = 16.6667;
+// Frame-time baselines and scaling
+// --------------------------------
+// We want a simple, typical frame-time history graph:
+// - Fixed vertical scale (no jumping due to a single spike).
+// - Clear reference lines at 60 FPS and 30 FPS budgets.
+// - Calm coloring for "good" frames; only warn on meaningful spikes.
+const IDEAL_FPS: f32 = 60.0;
+const IDEAL_FRAME_MS: f32 = 1000.0 / IDEAL_FPS;
+
+const WARN_FPS: f32 = 30.0;
+const WARN_FRAME_MS: f32 = 1000.0 / WARN_FPS;
+
+// Fixed vertical max for the graph (ms). Tune to taste.
+// - 50ms shows 60/30fps budgets clearly and highlights spikes.
+// - If you expect worse spikes, bump this to 80–120ms.
+const FLAME_GRAPH_MAX_MS: f32 = 50.0;
+
+// Color thresholds (ms over the 60 FPS budget) for warnings.
+// Keep these fairly high so we don't show yellow constantly due to tiny jitter.
+const WARN_OVER_BUDGET_MS: f32 = 2.0;
+const CRIT_OVER_BUDGET_MS: f32 = 8.0;
 
 fn ms_to_fps(ms: f64) -> f64 {
     if ms > 0.0 { 1000.0 / ms } else { 0.0 }
+}
+
+fn clamp_ms(v: f32) -> f32 {
+    v.clamp(0.0, 10_000.0)
 }
 
 pub(super) fn plugin(app: &mut App) {
@@ -220,7 +245,18 @@ fn render(
 
             ui.separator();
 
-            // Flame graph of the last N frame times (ms), driven by our `FpsDebug` ring buffer.
+            // Frame-time history graph (ms), driven by our `FpsDebug` ring buffer.
+            //
+            // This uses a FIXED vertical scale (0..FLAME_GRAPH_MAX_MS) so it doesn't jump
+            // when a single spike appears.
+            //
+            // Typical reference lines:
+            // - 60 FPS budget: 16.67ms
+            // - 30 FPS budget: 33.33ms
+            //
+            // Colors are intentionally calm:
+            // - green for frames near/under the 60 FPS budget
+            // - yellow/red for meaningful spikes
             let graph_width = ui.available_width().min(480.0);
             let (rect, _response) = ui.allocate_exact_size(
                 egui::vec2(graph_width, FLAME_GRAPH_HEIGHT_PX),
@@ -247,48 +283,104 @@ fn render(
                 // Oldest index in the ring buffer.
                 let start = (fps_debug.history_head + FPS_HISTORY_LEN - n) % FPS_HISTORY_LEN;
 
+                // Fixed vertical scale (static; does not depend on min/max history).
                 let scale_min_ms: f32 = 0.0;
                 let scale_max_ms: f32 = FLAME_GRAPH_MAX_MS;
                 let scale_range_ms: f32 = (scale_max_ms - scale_min_ms).max(0.0001);
 
+                // Reference lines:
+                // - 60 FPS budget: 16.67ms
+                // - 30 FPS budget: 33.33ms
+                //
+                // These are "typical" frame-time graph baselines. They don't change with spikes.
+                let line_color = egui::Color32::from_gray(95);
+                let label_color = egui::Color32::from_gray(140);
+
+                // 60 FPS line (primary)
+                let budget_60_y = rect.bottom()
+                    - ((IDEAL_FRAME_MS - scale_min_ms) / scale_range_ms).clamp(0.0, 1.0)
+                        * rect.height();
+                painter.line_segment(
+                    [
+                        egui::pos2(rect.left(), budget_60_y),
+                        egui::pos2(rect.right(), budget_60_y),
+                    ],
+                    egui::Stroke::new(1.0, line_color),
+                );
+                painter.text(
+                    egui::pos2(rect.left() + 4.0, budget_60_y - 10.0),
+                    egui::Align2::LEFT_TOP,
+                    "60 FPS (16.67ms)",
+                    egui::FontId::monospace(10.0),
+                    label_color,
+                );
+
+                // 30 FPS line (secondary)
+                let budget_30_y = rect.bottom()
+                    - ((WARN_FRAME_MS - scale_min_ms) / scale_range_ms).clamp(0.0, 1.0)
+                        * rect.height();
+                painter.line_segment(
+                    [
+                        egui::pos2(rect.left(), budget_30_y),
+                        egui::pos2(rect.right(), budget_30_y),
+                    ],
+                    egui::Stroke::new(1.0, line_color),
+                );
+                painter.text(
+                    egui::pos2(rect.left() + 4.0, budget_30_y - 10.0),
+                    egui::Align2::LEFT_TOP,
+                    "30 FPS (33.33ms)",
+                    egui::FontId::monospace(10.0),
+                    label_color,
+                );
+
                 for i in 0..n {
                     let idx = (start + i) % FPS_HISTORY_LEN;
-                    let dt_ms = fps_debug.frame_times_secs[idx] * 1000.0;
+                    let dt_ms = clamp_ms(fps_debug.frame_times_secs[idx] * 1000.0);
 
                     // Normalize to graph height using the fixed range.
-                    let t = ((dt_ms - scale_min_ms) / scale_range_ms).clamp(0.0, 1.0);
-                    let h = t * rect.height();
+                    // Values above `FLAME_GRAPH_MAX_MS` clamp to full height.
+                    let normalized = ((dt_ms - scale_min_ms) / scale_range_ms).clamp(0.0, 1.0);
+                    let bar_h = normalized * rect.height();
 
                     let x0 = rect.left() + i as f32 * bar_w;
                     let x1 = (x0 + bar_w - gap).min(rect.right());
                     let y1 = rect.bottom();
-                    let y0 = (y1 - h).max(rect.top());
+                    let y0 = (y1 - bar_h).max(rect.top());
 
-                    // Color: green -> yellow -> red based on normalized height.
-                    let color = if t < 0.5 {
-                        // green to yellow
-                        let k = (t / 0.5) as f32;
-                        egui::Color32::from_rgb((0.0 + k * 255.0) as u8, 255, 0)
+                    // Spike metric relative to the 60 FPS budget.
+                    let over_budget_ms = (dt_ms - IDEAL_FRAME_MS).max(0.0);
+
+                    // Color strategy:
+                    // - Under budget: calm green.
+                    // - Slightly over budget (<= WARN_OVER_BUDGET_MS): still green (avoid noise).
+                    // - Noticeably over budget: yellow.
+                    // - Big spikes: red.
+                    let color = if over_budget_ms <= WARN_OVER_BUDGET_MS {
+                        egui::Color32::from_rgb(70, 140, 80)
+                    } else if over_budget_ms <= CRIT_OVER_BUDGET_MS {
+                        egui::Color32::from_rgb(235, 200, 60)
                     } else {
-                        // yellow to red
-                        let k = ((t - 0.5) / 0.5) as f32;
-                        egui::Color32::from_rgb(255, (255.0 - k * 255.0) as u8, 0)
+                        egui::Color32::from_rgb(235, 70, 60)
                     };
 
                     let bar = egui::Rect::from_min_max(egui::pos2(x0, y0), egui::pos2(x1, y1));
                     painter.rect_filled(bar, 0.0, color);
+
+                    // Highlight only truly bad spikes.
+                    if over_budget_ms > CRIT_OVER_BUDGET_MS {
+                        painter.line_segment(
+                            [egui::pos2(x0, y0), egui::pos2(x1, y0)],
+                            egui::Stroke::new(1.0, egui::Color32::from_rgb(255, 255, 255)),
+                        );
+                    }
                 }
 
-                // Reference lines: 60fps (16.67ms) and 30fps (33.33ms), mapped into the same scale.
-                let line_color = egui::Color32::from_gray(90);
-                for &ms in &[16.67_f32, 33.33_f32] {
-                    let t = ((ms - scale_min_ms) / scale_range_ms).clamp(0.0, 1.0);
-                    let y = rect.bottom() - t * rect.height();
-                    painter.line_segment(
-                        [egui::pos2(rect.left(), y), egui::pos2(rect.right(), y)],
-                        egui::Stroke::new(1.0, line_color),
-                    );
-                }
+                // Note:
+                // We intentionally keep the graph simple and typical:
+                // - fixed vertical scale
+                // - 60 FPS and 30 FPS reference lines
+                // - calm colors to highlight real spikes
             }
 
             ui.separator();
