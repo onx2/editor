@@ -13,6 +13,17 @@ use core::time::Duration;
 const FPS_HISTORY_LEN: usize = 250;
 const PERF_WINDOW_REFRESH_INTERVAL: Duration = Duration::from_millis(100);
 
+// Flame graph tuning.
+const FLAME_GRAPH_HEIGHT_PX: f32 = 60.0;
+const FLAME_GRAPH_BAR_GAP_PX: f32 = 1.0;
+
+// Fixed flame-graph vertical scale (0..MAX_MS).
+const FLAME_GRAPH_MAX_MS: f32 = 16.6667;
+
+fn ms_to_fps(ms: f64) -> f64 {
+    if ms > 0.0 { 1000.0 / ms } else { 0.0 }
+}
+
 pub(super) fn plugin(app: &mut App) {
     app.init_resource::<FpsDebug>();
     app.add_systems(PreUpdate, tick);
@@ -97,7 +108,6 @@ struct PerfWindowCache {
     next_refresh_in: Duration,
     fps: Option<f64>,
     frame_time_ms: Option<f64>,
-    frame_time_ms_avg: Option<f64>,
     frame_time_ms_min: Option<f64>,
     frame_time_ms_max: Option<f64>,
 }
@@ -106,6 +116,7 @@ fn render(
     mut contexts: EguiContexts,
     diagnostics: Res<DiagnosticsStore>,
     time: Res<Time>,
+    fps_debug: Res<FpsDebug>,
     mut cache: Local<PerfWindowCache>,
 ) {
     let ctx = contexts.ctx_mut().expect("to get primary egui context");
@@ -122,10 +133,6 @@ fn render(
         cache.frame_time_ms = diagnostics
             .get(&FrameTimeDiagnosticsPlugin::FRAME_TIME)
             .and_then(Diagnostic::smoothed);
-
-        cache.frame_time_ms_avg = diagnostics
-            .get(&FrameTimeDiagnosticsPlugin::FRAME_TIME)
-            .and_then(Diagnostic::average);
 
         cache.frame_time_ms_min = diagnostics
             .get(&FrameTimeDiagnosticsPlugin::FRAME_TIME)
@@ -146,48 +153,159 @@ fn render(
 
     egui::Window::new("Performance")
         .resizable(false)
+        // Don't let the window expand to fill the available width.
+        // This keeps it closer to a compact "tool window" size.
+        .max_width(300.0)
         .show(ctx, |ui| {
+            // Compact header row:
+            // FPS: XX.XX (YY.YY ms)    min: AA.AA  max: BB.BB
             ui.horizontal(|ui| {
-                ui.label("FPS (smoothed):");
-                match cache.fps {
-                    Some(fps) => ui.monospace(format!("{fps:.2}")),
-                    None => ui.monospace("(warming up)"),
+                // Left side: FPS + (ms)
+                ui.label("FPS:");
+                match (cache.fps, cache.frame_time_ms) {
+                    (Some(fps), Some(ms)) => {
+                        ui.monospace(format!("{fps:.2} ({ms:.2} ms)"));
+                    }
+                    (Some(fps), None) => {
+                        ui.monospace(format!("{fps:.2}"));
+                    }
+                    (None, Some(ms)) => {
+                        ui.monospace(format!("(warming up) ({ms:.2} ms)"));
+                    }
+                    (None, None) => {
+                        ui.monospace("(warming up)");
+                    }
+                };
+
+                // Push min/max to the right edge.
+                ui.add_space(ui.available_width());
+
+                // Right side: min/max in FPS derived from the SAME rolling history used by the flame graph.
+                // This keeps the header consistent with what you see below.
+                let mut history_min_ms: Option<f64> = None;
+                let mut history_max_ms: Option<f64> = None;
+
+                let n = fps_debug.history_len.min(FPS_HISTORY_LEN);
+                if n > 0 {
+                    let start = (fps_debug.history_head + FPS_HISTORY_LEN - n) % FPS_HISTORY_LEN;
+                    for i in 0..n {
+                        let idx = (start + i) % FPS_HISTORY_LEN;
+                        let dt_ms = (fps_debug.frame_times_secs[idx] as f64) * 1000.0;
+
+                        history_min_ms = Some(match history_min_ms {
+                            Some(v) => v.min(dt_ms),
+                            None => dt_ms,
+                        });
+                        history_max_ms = Some(match history_max_ms {
+                            Some(v) => v.max(dt_ms),
+                            None => dt_ms,
+                        });
+                    }
                 }
+
+                // Worst (max ms) => min FPS, best (min ms) => max FPS.
+                let min_fps = history_max_ms.map(ms_to_fps);
+                let max_fps = history_min_ms.map(ms_to_fps);
+
+                ui.label("min:");
+                match min_fps {
+                    Some(v) => {
+                        ui.monospace(format!("{v:.2}"));
+                    }
+                    None => {
+                        ui.monospace("(warming up)");
+                    }
+                };
+
+                ui.add_space(12.0);
+
+                ui.label("max:");
+                match max_fps {
+                    Some(v) => {
+                        ui.monospace(format!("{v:.2}"));
+                    }
+                    None => {
+                        ui.monospace("(warming up)");
+                    }
+                };
             });
 
             ui.separator();
 
-            ui.horizontal(|ui| {
-                ui.label("Frame time (smoothed):");
-                match cache.frame_time_ms {
-                    Some(ms) => ui.monospace(format!("{ms:.3} ms")),
-                    None => ui.monospace("(warming up)"),
-                }
-            });
+            // Flame graph of the last N frame times (ms), driven by our `FpsDebug` ring buffer.
+            // Keep the flame graph from forcing the window to grow wide.
+            // If the window is wider than this, we still only draw within this cap.
+            let graph_width = ui.available_width().min(480.0);
+            let (rect, _response) = ui.allocate_exact_size(
+                egui::vec2(graph_width, FLAME_GRAPH_HEIGHT_PX),
+                egui::Sense::hover(),
+            );
 
-            ui.horizontal(|ui| {
-                ui.label("Frame time (avg):");
-                match cache.frame_time_ms_avg {
-                    Some(ms) => ui.monospace(format!("{ms:.3} ms")),
-                    None => ui.monospace("(warming up)"),
-                }
-            });
+            let painter = ui.painter();
 
-            ui.horizontal(|ui| {
-                ui.label("Frame time (min):");
-                match cache.frame_time_ms_min {
-                    Some(ms) => ui.monospace(format!("{ms:.3} ms")),
-                    None => ui.monospace("(warming up)"),
-                }
-            });
+            // Background.
+            painter.rect_filled(rect, 2.0, egui::Color32::from_gray(18));
+            painter.rect_stroke(
+                rect,
+                2.0,
+                egui::Stroke::new(1.0, egui::Color32::from_gray(60)),
+                egui::StrokeKind::Inside,
+            );
 
-            ui.horizontal(|ui| {
-                ui.label("Frame time (max):");
-                match cache.frame_time_ms_max {
-                    Some(ms) => ui.monospace(format!("{ms:.3} ms")),
-                    None => ui.monospace("(warming up)"),
+            // Draw bars oldest -> newest, left -> right.
+            let n = fps_debug.history_len.min(FPS_HISTORY_LEN);
+            if n > 0 {
+                let bar_w = (rect.width() / n as f32).max(1.0);
+                let gap = FLAME_GRAPH_BAR_GAP_PX.min(bar_w - 1.0).max(0.0);
+
+                // Oldest index in the ring buffer.
+                let start = (fps_debug.history_head + FPS_HISTORY_LEN - n) % FPS_HISTORY_LEN;
+
+                // Fixed vertical scale (0..FLAME_GRAPH_MAX_MS) to keep the baseline mostly flat
+                // at very high FPS, while spikes stand out clearly.
+                let scale_min_ms: f32 = 0.0;
+                let scale_max_ms: f32 = FLAME_GRAPH_MAX_MS;
+                let scale_range_ms: f32 = (scale_max_ms - scale_min_ms).max(0.0001);
+
+                for i in 0..n {
+                    let idx = (start + i) % FPS_HISTORY_LEN;
+                    let dt_ms = fps_debug.frame_times_secs[idx] * 1000.0;
+
+                    // Normalize to graph height using the fixed range.
+                    let t = ((dt_ms - scale_min_ms) / scale_range_ms).clamp(0.0, 1.0);
+                    let h = t * rect.height();
+
+                    let x0 = rect.left() + i as f32 * bar_w;
+                    let x1 = (x0 + bar_w - gap).min(rect.right());
+                    let y1 = rect.bottom();
+                    let y0 = (y1 - h).max(rect.top());
+
+                    // Color: green -> yellow -> red based on normalized height.
+                    let color = if t < 0.5 {
+                        // green to yellow
+                        let k = (t / 0.5) as f32;
+                        egui::Color32::from_rgb((0.0 + k * 255.0) as u8, 255, 0)
+                    } else {
+                        // yellow to red
+                        let k = ((t - 0.5) / 0.5) as f32;
+                        egui::Color32::from_rgb(255, (255.0 - k * 255.0) as u8, 0)
+                    };
+
+                    let bar = egui::Rect::from_min_max(egui::pos2(x0, y0), egui::pos2(x1, y1));
+                    painter.rect_filled(bar, 0.0, color);
                 }
-            });
+
+                // Reference lines: 60fps (16.67ms) and 30fps (33.33ms), mapped into the same scale.
+                let line_color = egui::Color32::from_gray(90);
+                for &ms in &[16.67_f32, 33.33_f32] {
+                    let t = ((ms - scale_min_ms) / scale_range_ms).clamp(0.0, 1.0);
+                    let y = rect.bottom() - t * rect.height();
+                    painter.line_segment(
+                        [egui::pos2(rect.left(), y), egui::pos2(rect.right(), y)],
+                        egui::Stroke::new(1.0, line_color),
+                    );
+                }
+            }
 
             ui.separator();
             ui.small(format!(
