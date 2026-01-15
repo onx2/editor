@@ -6,11 +6,12 @@ use spacetimedb_sdk::__codegen::{self as __sdk, __lib, __sats, __ws};
 
 #[derive(__lib::ser::Serialize, __lib::de::Deserialize, Clone, PartialEq, Debug)]
 #[sats(crate = __lib)]
-pub struct CapsuleYData {
-    pub half_height: f32,
-    pub radius: f32,
+pub struct Triangle {
+    pub v_1: u32,
+    pub v_2: u32,
+    pub v_3: u32,
 }
 
-impl __sdk::InModule for CapsuleYData {
+impl __sdk::InModule for Triangle {
     type Module = super::RemoteModule;
 }
