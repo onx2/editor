@@ -1,27 +1,20 @@
-// Infinite grid shader (WGSL)
-// Inspired by bevy_infinite_grid, adapted for editor usage in this repo.
+// Infinite grid shader inspired by bevy_infinite_grid, adapted for editor usage in this repo.
 //
-// -----------------------------------------------------------------------------
-// OVERVIEW (read this first)
-// -----------------------------------------------------------------------------
-//
-// What this shader draws
-// ----------------------
-// An editor-style "infinite" ground grid rendered on a plane (usually XZ at y=0).
+// An editor-style "infinite" ground grid rendered on a plane (XZ at y=0).
 // There is no large grid mesh. Instead, we render a fullscreen quad and, per
 // pixel, compute where that pixel's camera ray intersects the grid plane.
 //
 // Pipeline sketch
 // ---------------
-// - Vertex stage: emits a fullscreen quad and outputs two world-space points
-//   per vertex ("near" and "far") so the fragment stage can reconstruct a ray.
-// - Fragment stage: ray-plane intersection -> stable 2D plane coordinates ->
-//   procedural grid/axis evaluation (anti-aliased via derivatives).
+// Vertex:
+// Emits a fullscreen quad & outputs two world-space points per vertex ("near" & "far"), so the fragment stage can reconstruct a ray.
+//
+// Fragment:
+// Ray-plane intersection -> stable 2D plane coordinates -> procedural grid/axis evaluation (anti-aliased via derivatives).
 //
 // Why a fullscreen quad?
 // ----------------------
-// Constant geometry cost (4 vertices), no tiling seams, and stable line thickness
-// via `fwidth(...)`-based anti-aliasing.
+// Constant geometry cost (4 vertices), no tiling seams, and stable line thickness via `fwidth(...)`-based anti-aliasing.
 //
 // Coordinate spaces used below
 // ----------------------------
@@ -48,14 +41,8 @@
 // Common terms:
 // - "coverage": 0..1 coverage of a line in the current pixel (anti-aliased mask)
 // - "weight"  : user/scale-driven multiplier applied to coverage
-//
-// -----------------------------------------------------------------------------
-// END OVERVIEW
-// -----------------------------------------------------------------------------
 
 struct GridPlane {
-    // planar_rotation_matrix:
-    // -----------------------
     // We intersect the view ray with the plane to get a 3D point in world space.
     // To draw a grid, we want a stable 2D coordinate system on that plane.
     //
@@ -66,22 +53,14 @@ struct GridPlane {
     // identity, but we keep it generic so the grid plane can be rotated.
     planar_rotation_matrix: mat3x3<f32>,
 
-    // origin:
-    // -------
-    // A point on the plane in world space. For a y=0 ground plane, origin is
-    // typically (0,0,0).
+    // A point on the plane in world space. For a y=0 ground plane, origin is typically (0,0,0).
     origin: vec3<f32>,
 
-    // normal:
-    // -------
-    // Plane normal (unit vector) in world space. For the XZ plane (y=0), this
-    // is typically (0,1,0).
+    // Plane normal (unit vector) in world space. For the XZ plane (y=0), this is typically (0,1,0).
     normal: vec3<f32>,
 };
 
 struct GridSettings {
-    // scale:
-    // ------
     // Think of this as the "base scale" applied to plane coordinates before we
     // evaluate grid lines. In this project we want 1 Bevy unit == 1 meter, so
     // the CPU typically sets this to 1.0.
@@ -89,16 +68,12 @@ struct GridSettings {
     // If you set scale higher, the grid becomes denser (more lines per meter).
     scale: f32,
 
-    // dist_fadeout_const:
-    // -------------------
     // This is stored as 1.0 / fadeout_distance on the CPU so the shader can
     // multiply instead of divide (cheaper).
     //
     // Used to fade the grid as it recedes away from the camera.
     dist_fadeout_const: f32,
 
-    // dot_fadeout_const:
-    // ------------------
     // Another constant stored as a reciprocal on the CPU.
     //
     // Used to reduce aliasing when the viewing angle is very shallow relative
@@ -106,8 +81,6 @@ struct GridSettings {
     // more we fade (or soften) to avoid noisy patterns.
     dot_fadeout_const: f32,
 
-    // Axis colors:
-    // ------------
     // These are the colored axis lines you see in editors:
     // - X axis: typically red
     // - Z axis: typically blue
@@ -116,8 +89,6 @@ struct GridSettings {
     x_axis_color: vec3<f32>,
     z_axis_color: vec3<f32>,
 
-    // grid_line_color:
-    // ----------------
     // Shared grid line color used for all scales.
     //
     // - RGB: line color (usually white-ish / light gray)
@@ -130,83 +101,33 @@ struct GridSettings {
     // - per-scale brightness multiplier (artistic tuning)
     grid_line_color: vec4<f32>,
 
-    // axis_alpha:
-    // -----------
     // Opacity multiplier for the axis lines.
     // (Axis RGB comes from x_axis_color / z_axis_color; axis lines are always drawn.)
     axis_alpha: f32,
  };
 
 struct View {
-    // projection:
-    // -----------
     // Transforms from view space -> clip space.
     //
     // Clip space is what the GPU rasterizer uses to decide where pixels land
     // on screen.
     projection: mat4x4<f32>,
 
-    // inverse_projection:
-    // -------------------
     // Transforms from clip space -> view space (inverse of projection).
     // Used for ray reconstruction / unprojection.
     inverse_projection: mat4x4<f32>,
 
-    // view:
-    // -----
     // In this shader, `view` is the matrix used to bring points into view space.
     // (Bevy provides matrices in a specific convention; we follow what worked in
     // bevy_infinite_grid.)
     view: mat4x4<f32>,
 
-    // inverse_view:
-    // -------------
     // Inverse of `view`. Lets us convert from view space -> world space.
     inverse_view: mat4x4<f32>,
 
-    // world_position:
-    // ---------------
-    // Camera position in world space (Vec3).
-    // Used for distance-based fading and angle-based fading.
+    // Camera position in world space (Vec3). Used for distance-based fading and angle-based fading.
     world_position: vec3<f32>,
 };
-
-fn bias_75_25(t: f32) -> f32 {
-    // Crossfade bias helper
-    // ---------------------
-    // A plain crossfade uses weights (1 - t) and t, which yields a 50/50 blend at
-    // t=0.5. For grids this often looks too "busy" because two line sets are
-    // equally strong.
-    //
-    // We bias the blend so one layer stays dominant longer:
-    //   t' = t^2
-    // This keeps endpoints (0 and 1) unchanged but shifts the midpoint:
-    //   t=0.5 -> t'=0.25  (75/25 instead of 50/50)
-    return t * t;
- }
-
-fn grid_brightness(cell_m: f32) -> f32 {
-    // Per-scale alpha multiplier
-    // --------------------------
-    // Multiplies the *alpha* contribution of a layer based on its cell size.
-    // This is purely an artistic tuning knob (not physically based).
-    //
-    // Note: This is separate from "which layers are active" (weights). We use:
-    // - weights: decide when a layer should appear/disappear (based on camera height)
-    // - brightness: relative strength between 1m/10m/100m when they are present
-    //
-    // Anchored-grid intent:
-    // - 10m should read clearly as the always-on baseline.
-    // - 1m is detail (can be weaker).
-    // - 100m is context (can be weaker than 10m but still readable when enabled).
-    if cell_m <= 1.0 {
-        return 0.45;
-    } else if cell_m <= 10.0 {
-        return 0.6;
-    } else {
-        return 0.75;
-    }
- }
 
 @group(0) @binding(0) var<uniform> view: View;
 
@@ -217,42 +138,25 @@ struct VertexInput {
     @builtin(vertex_index) index: u32,
 };
 
-fn unproject_point(clip_xyz: vec3<f32>) -> vec3<f32> {
-    // Clip -> world helper used for ray reconstruction
-    // ------------------------------------------------
-    // Given a clip-space position (x,y in [-1,1], z chosen by us), return the
-    // corresponding world-space position.
-    //
-    // We use two z values later ("near-ish" and "far-ish") to form a ray
-    // direction per pixel.
-    //
-    // Note: The specific matrix order here matches what Bevy provides for this
-    // pipeline (and what bevy_infinite_grid uses).
-    let unprojected = view.view * view.inverse_projection * vec4<f32>(clip_xyz, 1.0);
-    return unprojected.xyz / unprojected.w;
- }
-
 struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
     @location(0) near_point: vec3<f32>,
     @location(1) far_point: vec3<f32>,
 };
 
+// Emits a clip-space quad (triangle strip, 4 vertices) and provides two
+// world-space points per vertex so the fragment stage can reconstruct a ray.
+//
+// Quad corners in clip space (triangle strip order):
+//  0: (-1,-1)  1: (-1, 1)  2: ( 1,-1)  3: ( 1, 1)
+//
+// We intentionally pick two clip-space Z values:
+// - z = 1.0   : "near-ish" endpoint
+// - z = 0.001 : "far-ish" endpoint
+// The exact values are not magical; they just need to be distinct and stable
+// so `normalize(far - near)` produces a consistent ray direction.
 @vertex
 fn vertex(vertex_input: VertexInput) -> VertexOutput {
-    // Fullscreen quad vertex stage
-    // ----------------------------
-    // Emits a clip-space quad (triangle strip, 4 vertices) and provides two
-    // world-space points per vertex so the fragment stage can reconstruct a ray.
-    //
-    // Quad corners in clip space (triangle strip order):
-    //  0: (-1,-1)  1: (-1, 1)  2: ( 1,-1)  3: ( 1, 1)
-    //
-    // We intentionally pick two clip-space Z values:
-    // - z = 1.0   : "near-ish" endpoint
-    // - z = 0.001 : "far-ish" endpoint
-    // The exact values are not magical; they just need to be distinct and stable
-    // so `normalize(far - near)` produces a consistent ray direction.
     var clip_space_corners = array<vec3<f32>, 4>(
         vec3<f32>(-1.0, -1.0, 1.0),
         vec3<f32>(-1.0,  1.0, 1.0),
@@ -277,8 +181,6 @@ struct FragmentOutput {
 
 @fragment
 fn fragment(vertex_output: VertexOutput) -> FragmentOutput {
-    // Fragment shader: ray-plane intersection + procedural grid
-    // ---------------------------------------------------------
     // Every pixel runs this function.
     //
     // Step 1: Build a view ray (in WORLD SPACE)
@@ -430,19 +332,19 @@ fn fragment(vertex_output: VertexOutput) -> FragmentOutput {
 
     // Tuning knobs:
     // - `smoothstep(a,b,h)` returns 0..1 as `h` moves from `a` to `b`.
-    // - `bias_75_25` reduces the "both equally visible" look around the midpoint.
+    // - `sq` reduces the "both equally visible" look around the midpoint.
     //
     // Note: weights do not need to sum to 1.0 because 10m is intentionally always present.
     if camera_height_above_plane_meters < 120.0 {
         // Close: fade OUT 1m detail as you move away from the plane.
-        let fade_out_1m = bias_75_25(smoothstep(2.0, 120.0, camera_height_above_plane_meters));
+        let fade_out_1m = sq(smoothstep(2.0, 120.0, camera_height_above_plane_meters));
         primary_layer_weight = 1.0;             // 10m always on
         secondary_layer_weight = 1.0 - fade_out_1m;
         primary_cell_size_meters = 10.0;
         secondary_cell_size_meters = 1.0;
     } else {
         // Far: fade IN 100m context as you move away from the plane.
-        let fade_in_100m = bias_75_25(smoothstep(120.0, 600.0, camera_height_above_plane_meters));
+        let fade_in_100m = sq(smoothstep(120.0, 600.0, camera_height_above_plane_meters));
         primary_layer_weight = 1.0;             // 10m always on
         secondary_layer_weight = fade_in_100m;
         primary_cell_size_meters = 10.0;
@@ -569,3 +471,55 @@ fn fragment(vertex_output: VertexOutput) -> FragmentOutput {
     out.color = vec4<f32>(rgb, alpha_out);
     return out;
  }
+
+ // Crossfade bias helper
+ // ---------------------
+ // A plain crossfade uses weights (1 - t) and t, which yields a 50/50 blend at
+ // t=0.5. For grids this often looks too "busy" because two line sets are
+ // equally strong.
+ //
+ // We bias the blend so one layer stays dominant longer:
+ //   t' = t^2
+ // This keeps endpoints (0 and 1) unchanged but shifts the midpoint:
+ //   t=0.5 -> t'=0.25  (75/25 instead of 50/50)
+fn sq(t: f32) -> f32 {
+    return t * t;
+}
+
+// Per-scale alpha multiplier
+// --------------------------
+// Multiplies the *alpha* contribution of a layer based on its cell size.
+// This is purely an artistic tuning knob (not physically based).
+//
+// Note: This is separate from "which layers are active" (weights). We use:
+// - weights: decide when a layer should appear/disappear (based on camera height)
+// - brightness: relative strength between 1m/10m/100m when they are present
+//
+// Anchored-grid intent:
+// - 10m should read clearly as the always-on baseline.
+// - 1m is detail (can be weaker).
+// - 100m is context (can be weaker than 10m but still readable when enabled).
+fn grid_brightness(cell_m: f32) -> f32 {
+    if cell_m <= 1.0 {
+        return 0.45;
+    } else if cell_m <= 10.0 {
+        return 0.6;
+    } else {
+        return 0.75;
+    }
+}
+
+// Clip -> world helper used for ray reconstruction
+// ------------------------------------------------
+// Given a clip-space position (x,y in [-1,1], z chosen by us), return the
+// corresponding world-space position.
+//
+// We use two z values later ("near-ish" and "far-ish") to form a ray
+// direction per pixel.
+//
+// Note: The specific matrix order here matches what Bevy provides for this
+// pipeline (and what bevy_infinite_grid uses).
+fn unproject_point(clip_xyz: vec3<f32>) -> vec3<f32> {
+    let unprojected = view.view * view.inverse_projection * vec4<f32>(clip_xyz, 1.0);
+    return unprojected.xyz / unprojected.w;
+}

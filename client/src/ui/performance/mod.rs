@@ -92,36 +92,25 @@ impl Default for FpsDebug {
 }
 
 pub fn tick(time: Res<Time>, mut fps_debug: ResMut<FpsDebug>) {
-    let new_dt = time.delta_secs();
-    let prev_dt = fps_debug.curr_delta_secs;
-
+    let last_delta_secs = fps_debug.curr_delta_secs;
     let fps = fps_debug.as_mut();
 
     fps.frame_counter += 1;
+    fps.last_delta_secs = last_delta_secs;
+    fps.curr_delta_secs = time.delta_secs();
 
-    fps.last_delta_secs = prev_dt;
-    fps.curr_delta_secs = new_dt;
-
-    let head = fps.history_head;
-    fps.frame_times_secs[head] = new_dt;
-    fps.history_head = (head + 1) % FPS_HISTORY_LEN;
+    fps.frame_times_secs[fps.history_head] = fps.curr_delta_secs;
+    fps.history_head = (fps.history_head + 1) % FPS_HISTORY_LEN;
     if fps.history_len < FPS_HISTORY_LEN {
         fps.history_len += 1;
     }
 
-    let history_len = fps.history_len;
-
-    let mut sum: f32 = 0.0;
-    for i in 0..history_len {
-        sum += fps.frame_times_secs[i];
-    }
-
-    fps.avg_frame_rate = if history_len > 0 && sum > 0.0 {
-        let avg_dt = sum / (history_len as f32);
-        1.0 / avg_dt
+    if fps.history_len > 0 {
+        let sum: f32 = fps.frame_times_secs.iter().take(fps.history_len).sum();
+        fps.avg_frame_rate = (fps.history_len as f32) / sum;
     } else {
-        0.0
-    };
+        fps.avg_frame_rate = 0.0;
+    }
 }
 
 #[derive(Default)]
@@ -310,7 +299,7 @@ fn render(
                 painter.text(
                     egui::pos2(rect.left() + 4.0, budget_60_y - 10.0),
                     egui::Align2::LEFT_TOP,
-                    "60 FPS (16.67ms)",
+                    "60 FPS",
                     egui::FontId::monospace(10.0),
                     label_color,
                 );
@@ -329,7 +318,7 @@ fn render(
                 painter.text(
                     egui::pos2(rect.left() + 4.0, budget_30_y - 10.0),
                     egui::Align2::LEFT_TOP,
-                    "30 FPS (33.33ms)",
+                    "30 FPS",
                     egui::FontId::monospace(10.0),
                     label_color,
                 );
@@ -351,11 +340,6 @@ fn render(
                     // Spike metric relative to the 60 FPS budget.
                     let over_budget_ms = (dt_ms - IDEAL_FRAME_MS).max(0.0);
 
-                    // Color strategy:
-                    // - Under budget: calm green.
-                    // - Slightly over budget (<= WARN_OVER_BUDGET_MS): still green (avoid noise).
-                    // - Noticeably over budget: yellow.
-                    // - Big spikes: red.
                     let color = if over_budget_ms <= WARN_OVER_BUDGET_MS {
                         egui::Color32::from_rgb(70, 140, 80)
                     } else if over_budget_ms <= CRIT_OVER_BUDGET_MS {
@@ -375,12 +359,6 @@ fn render(
                         );
                     }
                 }
-
-                // Note:
-                // We intentionally keep the graph simple and typical:
-                // - fixed vertical scale
-                // - 60 FPS and 30 FPS reference lines
-                // - calm colors to highlight real spikes
             }
 
             ui.separator();
