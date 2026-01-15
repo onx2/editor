@@ -1,4 +1,5 @@
 mod app_bar;
+mod asset_browser;
 mod performance;
 
 use bevy::{

@@ -13,9 +13,7 @@ use core::time::Duration;
 const FPS_HISTORY_LEN: usize = 250;
 const PERF_WINDOW_REFRESH_INTERVAL: Duration = Duration::from_millis(100);
 
-pub fn plugin(app: &mut App) {
-    // Data sources:
-    // - Custom rolling history (for future flame graph / last-250)
+pub(super) fn plugin(app: &mut App) {
     app.init_resource::<FpsDebug>();
     app.add_systems(PreUpdate, tick);
 
