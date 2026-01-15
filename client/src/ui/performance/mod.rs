@@ -26,12 +26,8 @@ fn ms_to_fps(ms: f64) -> f64 {
 
 pub(super) fn plugin(app: &mut App) {
     app.init_resource::<FpsDebug>();
-    app.add_systems(PreUpdate, tick);
-
-    // - Bevy diagnostics (same source used by bevy_dev_tools fps_overlay)
     app.add_plugins(FrameTimeDiagnosticsPlugin::default());
-
-    // UI:
+    app.add_systems(PreUpdate, tick);
     app.add_systems(EguiPrimaryContextPass, render);
 }
 
@@ -153,14 +149,9 @@ fn render(
 
     egui::Window::new("Performance")
         .resizable(false)
-        // Don't let the window expand to fill the available width.
-        // This keeps it closer to a compact "tool window" size.
         .max_width(300.0)
         .show(ctx, |ui| {
-            // Compact header row:
-            // FPS: XX.XX (YY.YY ms)    min: AA.AA  max: BB.BB
             ui.horizontal(|ui| {
-                // Left side: FPS + (ms)
                 ui.label("FPS:");
                 match (cache.fps, cache.frame_time_ms) {
                     (Some(fps), Some(ms)) => {
@@ -177,11 +168,8 @@ fn render(
                     }
                 };
 
-                // Push min/max to the right edge.
                 ui.add_space(ui.available_width());
 
-                // Right side: min/max in FPS derived from the SAME rolling history used by the flame graph.
-                // This keeps the header consistent with what you see below.
                 let mut history_min_ms: Option<f64> = None;
                 let mut history_max_ms: Option<f64> = None;
 
@@ -233,8 +221,6 @@ fn render(
             ui.separator();
 
             // Flame graph of the last N frame times (ms), driven by our `FpsDebug` ring buffer.
-            // Keep the flame graph from forcing the window to grow wide.
-            // If the window is wider than this, we still only draw within this cap.
             let graph_width = ui.available_width().min(480.0);
             let (rect, _response) = ui.allocate_exact_size(
                 egui::vec2(graph_width, FLAME_GRAPH_HEIGHT_PX),
@@ -261,8 +247,6 @@ fn render(
                 // Oldest index in the ring buffer.
                 let start = (fps_debug.history_head + FPS_HISTORY_LEN - n) % FPS_HISTORY_LEN;
 
-                // Fixed vertical scale (0..FLAME_GRAPH_MAX_MS) to keep the baseline mostly flat
-                // at very high FPS, while spikes stand out clearly.
                 let scale_min_ms: f32 = 0.0;
                 let scale_max_ms: f32 = FLAME_GRAPH_MAX_MS;
                 let scale_range_ms: f32 = (scale_max_ms - scale_min_ms).max(0.0001);
