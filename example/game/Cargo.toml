@@ -1,0 +1,9 @@
+[package]
+name = "client"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+bevy = { version = "0.17.3" }
+bevy_spacetimedb = "0.7.2"
+spacetimedb-sdk = "1.11.3"

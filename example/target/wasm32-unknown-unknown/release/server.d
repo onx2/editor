@@ -1,0 +1,1 @@
+/Users/onx2/Documents/projects/editor/example/target/wasm32-unknown-unknown/release/server.wasm: /Users/onx2/Documents/projects/editor/backend/src/collision_shape.rs /Users/onx2/Documents/projects/editor/backend/src/lib.rs /Users/onx2/Documents/projects/editor/backend/src/primitives.rs /Users/onx2/Documents/projects/editor/example/server/src/lib.rs

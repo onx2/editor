@@ -31,8 +31,6 @@ use bevy::{
 };
 use std::borrow::Cow;
 
-use crate::flycam::FlyCam;
-
 #[derive(Resource, Copy, Clone, Debug)]
 pub struct InfiniteGridEnabled(pub bool);
 
