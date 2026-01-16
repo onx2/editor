@@ -4,28 +4,15 @@
 #![allow(unused, clippy::all)]
 use spacetimedb_sdk::__codegen::{self as __sdk, __lib, __sats, __ws};
 
-use super::ball_type::Ball;
-use super::capsule_type::Capsule;
-use super::convex_hull_type::ConvexHull;
-use super::cuboid_type::Cuboid;
-use super::heightfield_type::Heightfield;
+use super::vec_3_type::Vec3;
 
 #[derive(__lib::ser::Serialize, __lib::de::Deserialize, Clone, PartialEq, Debug)]
 #[sats(crate = __lib)]
-pub enum CollisionShape {
-    None,
-
-    Cuboid(Cuboid),
-
-    Ball(Ball),
-
-    Capsule(Capsule),
-
-    Heightfield(Heightfield),
-
-    ConvexHull(ConvexHull),
+pub struct Segment {
+    pub a: Vec3,
+    pub b: Vec3,
 }
 
-impl __sdk::InModule for CollisionShape {
+impl __sdk::InModule for Segment {
     type Module = super::RemoteModule;
 }

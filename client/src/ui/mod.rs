@@ -3,9 +3,12 @@ mod asset_browser;
 mod performance;
 
 use bevy::{
-    camera::{CameraOutputMode, visibility::RenderLayers},
-    prelude::*,
+    app::{App, Startup},
+    camera::{Camera, Camera2d, CameraOutputMode, ClearColorConfig, visibility::RenderLayers},
+    color::Color,
+    ecs::system::{Commands, ResMut},
     render::render_resource::BlendState,
+    utils::default,
 };
 use bevy_egui::{EguiGlobalSettings, EguiPlugin, EguiPrimaryContextPass, PrimaryEguiContext};
 

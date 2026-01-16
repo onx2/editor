@@ -3,7 +3,6 @@ mod primitives;
 
 use collision_shape::CollisionShape;
 use primitives::{Quat, Vec3};
-use spacetimedb::ReducerContext;
 
 /// The stored reference to an object that exists in the world.
 #[spacetimedb::table(name = world_objects)]
@@ -29,19 +28,4 @@ pub struct WorldObject {
     /// Defines the physical boundaries and behavior of the object
     /// for physics calculations and hit detection.
     pub collision_shape: CollisionShape,
-}
-
-#[spacetimedb::reducer(init)]
-pub fn init(_ctx: &ReducerContext) {
-    // Called when the module is initially published
-}
-
-#[spacetimedb::reducer(client_connected)]
-pub fn identity_connected(_ctx: &ReducerContext) {
-    // Called everytime a new client connects
-}
-
-#[spacetimedb::reducer(client_disconnected)]
-pub fn identity_disconnected(_ctx: &ReducerContext) {
-    // Called everytime a client disconnects
 }

@@ -1,6 +1,22 @@
 use bevy::{
-    input::mouse::{MouseMotion, MouseScrollUnit, MouseWheel},
-    prelude::*,
+    app::{App, Startup, Update},
+    camera::Camera3d,
+    ecs::{
+        component::Component,
+        message::MessageReader,
+        query::With,
+        resource::Resource,
+        system::{Commands, Res, Single},
+    },
+    input::{
+        ButtonInput,
+        keyboard::KeyCode,
+        mouse::{MouseButton, MouseMotion, MouseScrollUnit, MouseWheel},
+    },
+    math::{Quat, Vec2, Vec3},
+    prelude::IntoScheduleConfigs,
+    time::Time,
+    transform::components::Transform,
     window::{CursorGrabMode, CursorOptions, PrimaryWindow},
 };
 
@@ -85,15 +101,11 @@ fn flycam_is_active(buttons: Res<ButtonInput<MouseButton>>, settings: Res<FlyCam
 fn flycam_toggle_capture(
     buttons: Res<ButtonInput<MouseButton>>,
     settings: Res<FlyCamSettings>,
-    mut cursor_q: Query<&mut CursorOptions, With<PrimaryWindow>>,
+    mut cursor: Single<&mut CursorOptions, With<PrimaryWindow>>,
 ) {
     if !settings.require_rmb {
         return;
     }
-
-    let Ok(mut cursor) = cursor_q.single_mut() else {
-        return;
-    };
 
     if buttons.just_pressed(MouseButton::Right) {
         cursor.grab_mode = CursorGrabMode::Locked;

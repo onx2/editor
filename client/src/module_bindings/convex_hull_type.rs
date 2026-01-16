@@ -4,17 +4,16 @@
 #![allow(unused, clippy::all)]
 use spacetimedb_sdk::__codegen::{self as __sdk, __lib, __sats, __ws};
 
+use super::triangle_type::Triangle;
 use super::vec_3_type::Vec3;
 
 #[derive(__lib::ser::Serialize, __lib::de::Deserialize, Clone, PartialEq, Debug)]
 #[sats(crate = __lib)]
-pub struct HeightfieldData {
-    pub width: u32,
-    pub height: u32,
-    pub heights: Vec<f32>,
-    pub scale: Vec3,
+pub struct ConvexHull {
+    pub points: Vec<Vec3>,
+    pub indices: Vec<Triangle>,
 }
 
-impl __sdk::InModule for HeightfieldData {
+impl __sdk::InModule for ConvexHull {
     type Module = super::RemoteModule;
 }
