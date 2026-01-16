@@ -18,22 +18,22 @@ pub struct Capsule {
 /// A 3D heightfield
 #[derive(spacetimedb::SpacetimeType, Debug, Default, Clone, PartialEq)]
 pub struct Heightfield {
-    width: u32,
-    height: u32,
-    heights: Vec<f32>,
-    scale: Vec3,
+    pub width: u32,
+    pub height: u32,
+    pub heights: Vec<f32>,
+    pub scale: Vec3,
 }
 
 /// A cuboid shape, also known as a box or rectangle.
 #[derive(spacetimedb::SpacetimeType, Clone, Copy, Default, Debug, PartialEq)]
 pub struct Cuboid {
-    half_extents: Vec3,
+    pub half_extents: Vec3,
 }
 
 /// A ball shape, also known as a sphere in 3D or a circle in 2D.
 #[derive(spacetimedb::SpacetimeType, Clone, Copy, Default, Debug, PartialEq)]
 pub struct Ball {
-    radius: f32,
+    pub radius: f32,
 }
 
 #[derive(spacetimedb::SpacetimeType, Clone, Copy, Default, Debug, PartialEq, Eq)]
@@ -46,7 +46,7 @@ pub struct Triangle {
 #[derive(spacetimedb::SpacetimeType, Clone, Default, Debug, PartialEq)]
 pub struct ConvexHull {
     /// Point cloud
-    points: Vec<Vec3>,
+    pub points: Vec<Vec3>,
     /// Triangles that form the hull
     pub indices: Vec<Triangle>,
 }
