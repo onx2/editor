@@ -7,6 +7,8 @@ mod ui;
 mod world_object;
 
 use bevy::asset::AssetPlugin;
+use bevy::color::palettes::css::ALICE_BLUE;
+use bevy::light::CascadeShadowConfigBuilder;
 use bevy::prelude::*;
 
 use crate::config::ClientRuntimeConfig;
@@ -24,15 +26,33 @@ fn main() {
         ..default()
     });
 
-    App::new()
-        .insert_resource(config)
-        .add_plugins((
-            spacetimedb::plugin,
-            world_object::plugin,
-            default_plugins,
-            ui::plugin,
-            infinite_grid::plugin,
-            flycam::plugin,
-        ))
-        .run();
+    let mut app = App::new();
+    app.insert_resource(config);
+    app.add_plugins((
+        spacetimedb::plugin,
+        world_object::plugin,
+        default_plugins,
+        ui::plugin,
+        infinite_grid::plugin,
+        flycam::plugin,
+    ));
+    app.add_systems(Startup, setup_sun);
+    app.insert_resource(AmbientLight {
+        color: ALICE_BLUE.into(),
+        brightness: 2_000.,
+        ..AmbientLight::default()
+    });
+    app.run();
+}
+
+fn setup_sun(mut commands: Commands) {
+    commands.spawn((
+        DirectionalLight {
+            illuminance: 80_000.0,
+            shadows_enabled: true,
+            ..default()
+        },
+        // Orientation: Looking down from the sky
+        Transform::from_xyz(0.0, 10.0, 0.0).looking_at(Vec3::new(1.0, -1.0, 1.0), Vec3::Y),
+    ));
 }
