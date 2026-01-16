@@ -6,7 +6,7 @@ resolver = "3"
 spacetimedb = "1.11.3"
 log = "0.4"
 
-bevy = { version = "0.17.3", features = ["bevy_dev_tools"] }
+bevy = { version = "0.17.3", features = ["bevy_dev_tools", "bevy_picking"] }
 bevy_spacetimedb = "0.7.2"
 spacetimedb-sdk = "1.11.3"
 

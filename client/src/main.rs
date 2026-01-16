@@ -8,7 +8,6 @@ mod world_object;
 
 use bevy::asset::AssetPlugin;
 use bevy::color::palettes::css::ALICE_BLUE;
-use bevy::light::CascadeShadowConfigBuilder;
 use bevy::prelude::*;
 
 use crate::config::ClientRuntimeConfig;
@@ -32,6 +31,7 @@ fn main() {
         spacetimedb::plugin,
         world_object::plugin,
         default_plugins,
+        MeshPickingPlugin,
         ui::plugin,
         infinite_grid::plugin,
         flycam::plugin,

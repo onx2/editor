@@ -1,4 +1,7 @@
-use crate::module_bindings::WorldObject;
+use crate::{
+    module_bindings::{WorldObject, insert_asset},
+    spacetimedb::SpacetimeDB,
+};
 use bevy::prelude::*;
 use bevy_spacetimedb::ReadInsertMessage;
 
@@ -37,14 +40,28 @@ fn on_insert(
             // Bevy supports the "#Scene0" suffix for glTF scenes.
             let scene_handle: Handle<Scene> = asset_server.load(format!("{asset_path}#Scene0"));
 
-            commands.spawn((
-                SceneRoot(scene_handle),
-                transform,
-                Name::new(format!("WorldObject({})", row.id)),
-            ));
+            commands
+                .spawn((
+                    SceneRoot(scene_handle),
+                    transform,
+                    Name::new(format!("WorldObject({})", row.id)),
+                ))
+                .observe(on_drag_rotate);
 
             println!("spawned world object {} from asset {}", row.id, asset_path);
             continue;
         }
+    }
+}
+
+fn on_drag_rotate(
+    drag: On<Pointer<Drag>>,
+    mut transforms: Query<&mut Transform>,
+    stdb: SpacetimeDB,
+) {
+    if let Ok(mut transform) = transforms.get_mut(drag.entity) {
+        // todo
+        // get object ID from a resource maybe?
+        // stdb.reducers().rotate_object(id)
     }
 }
