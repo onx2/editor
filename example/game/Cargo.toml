@@ -1,9 +1,9 @@
 [package]
-name = "client"
+name = "game"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-bevy = { version = "0.17.3" }
-bevy_spacetimedb = "0.7.2"
-spacetimedb-sdk = "1.11.3"
+bevy = {workspace = true}
+bevy_spacetimedb = {workspace = true}
+spacetimedb-sdk = {workspace = true}

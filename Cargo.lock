@@ -2927,6 +2927,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "game"
+version = "0.1.0"
+dependencies = [
+ "bevy",
+ "bevy_spacetimedb",
+ "spacetimedb-sdk",
+]
+
+[[package]]
 name = "generic-array"
 version = "0.14.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5203,6 +5212,15 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
+]
+
+[[package]]
+name = "server"
+version = "0.1.0"
+dependencies = [
+ "backend",
+ "log",
+ "spacetimedb",
 ]
 
 [[package]]

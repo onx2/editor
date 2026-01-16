@@ -1,27 +1,27 @@
-use backend::world_object;
+use backend::*;
 use spacetimedb::{Identity, ReducerContext, Table};
 
 #[spacetimedb::table(name = player, public)]
 pub struct Player {
     #[primary_key]
     identity: Identity,
-    name: String,
 }
 
 #[spacetimedb::reducer(init)]
 pub fn init(ctx: &ReducerContext) {
-    ctx.db.player().insert(Player {
-        identity: ctx.sender,
-        name: "Player".to_string(),
-    });
-    // ctx.db.world_object().insert(WorldObject {
-    //     identity: ctx.sender,
-    //     position: Vec3::new(0.0, 0.0, 0.0),
-    // });
+    let _ = ctx.db.world_object().id().find(&1);
 }
 
 #[spacetimedb::reducer(client_connected)]
-pub fn identity_connected(_ctx: &ReducerContext) {}
+pub fn identity_connected(ctx: &ReducerContext) {
+    ctx.db.player().insert(Player {
+        identity: ctx.sender,
+    });
+}
 
 #[spacetimedb::reducer(client_disconnected)]
-pub fn identity_disconnected(_ctx: &ReducerContext) {}
+pub fn identity_disconnected(ctx: &ReducerContext) {
+    let Some(p) = ctx.db.player().identity().find(ctx.sender) else {
+        return;
+    };
+}

@@ -1,8 +1,14 @@
 [workspace]
-members = ["client", "backend", "xtask"]
+members = ["client", "backend", "xtask", "example/game", "example/server"]
 resolver = "3"
 
 [workspace.dependencies]
+spacetimedb = "1.11.3"
+log = "0.4"
+
+bevy = { version = "0.17.3", features = ["bevy_dev_tools"] }
+bevy_spacetimedb = "0.7.2"
+spacetimedb-sdk = "1.11.3"
 
 # Enable a small amount of optimization in the dev profile.
 [profile.dev]

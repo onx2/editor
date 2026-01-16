@@ -12,6 +12,7 @@ pub mod collision_shape_type;
 pub mod convex_hull_type;
 pub mod cuboid_type;
 pub mod heightfield_type;
+pub mod insert_asset_reducer;
 pub mod quat_type;
 pub mod segment_type;
 pub mod triangle_type;
@@ -25,6 +26,7 @@ pub use collision_shape_type::CollisionShape;
 pub use convex_hull_type::ConvexHull;
 pub use cuboid_type::Cuboid;
 pub use heightfield_type::Heightfield;
+pub use insert_asset_reducer::{insert_asset, set_flags_for_insert_asset, InsertAssetCallbackId};
 pub use quat_type::Quat;
 pub use segment_type::Segment;
 pub use triangle_type::Triangle;
@@ -39,7 +41,9 @@ pub use world_object_type::WorldObject;
 /// Contained within a [`__sdk::ReducerEvent`] in [`EventContext`]s for reducer events
 /// to indicate which reducer caused the event.
 
-pub enum Reducer {}
+pub enum Reducer {
+    InsertAsset { asset_path: String },
+}
 
 impl __sdk::InModule for Reducer {
     type Module = RemoteModule;
@@ -48,6 +52,7 @@ impl __sdk::InModule for Reducer {
 impl __sdk::Reducer for Reducer {
     fn reducer_name(&self) -> &'static str {
         match self {
+            Reducer::InsertAsset { .. } => "insert_asset",
             _ => unreachable!(),
         }
     }
@@ -56,6 +61,13 @@ impl TryFrom<__ws::ReducerCallInfo<__ws::BsatnFormat>> for Reducer {
     type Error = __sdk::Error;
     fn try_from(value: __ws::ReducerCallInfo<__ws::BsatnFormat>) -> __sdk::Result<Self> {
         match &value.reducer_name[..] {
+            "insert_asset" => Ok(
+                __sdk::parse_reducer_args::<insert_asset_reducer::InsertAssetArgs>(
+                    "insert_asset",
+                    &value.args,
+                )?
+                .into(),
+            ),
             unknown => {
                 Err(
                     __sdk::InternalError::unknown_name("reducer", unknown, "ReducerCallInfo")

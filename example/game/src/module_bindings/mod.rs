@@ -14,6 +14,7 @@ pub mod cuboid_type;
 pub mod heightfield_type;
 pub mod identity_connected_reducer;
 pub mod identity_disconnected_reducer;
+pub mod insert_asset_reducer;
 pub mod player_table;
 pub mod player_type;
 pub mod quat_type;
@@ -35,6 +36,7 @@ pub use identity_connected_reducer::{
 pub use identity_disconnected_reducer::{
     identity_disconnected, set_flags_for_identity_disconnected, IdentityDisconnectedCallbackId,
 };
+pub use insert_asset_reducer::{insert_asset, set_flags_for_insert_asset, InsertAssetCallbackId};
 pub use player_table::*;
 pub use player_type::Player;
 pub use quat_type::Quat;
@@ -54,6 +56,7 @@ pub use world_object_type::WorldObject;
 pub enum Reducer {
     IdentityConnected,
     IdentityDisconnected,
+    InsertAsset { asset_path: String },
 }
 
 impl __sdk::InModule for Reducer {
@@ -65,6 +68,7 @@ impl __sdk::Reducer for Reducer {
         match self {
             Reducer::IdentityConnected => "identity_connected",
             Reducer::IdentityDisconnected => "identity_disconnected",
+            Reducer::InsertAsset { .. } => "insert_asset",
             _ => unreachable!(),
         }
     }
@@ -81,6 +85,13 @@ impl TryFrom<__ws::ReducerCallInfo<__ws::BsatnFormat>> for Reducer {
                 identity_disconnected_reducer::IdentityDisconnectedArgs,
             >("identity_disconnected", &value.args)?
             .into()),
+            "insert_asset" => Ok(
+                __sdk::parse_reducer_args::<insert_asset_reducer::InsertAssetArgs>(
+                    "insert_asset",
+                    &value.args,
+                )?
+                .into(),
+            ),
             unknown => {
                 Err(
                     __sdk::InternalError::unknown_name("reducer", unknown, "ReducerCallInfo")

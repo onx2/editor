@@ -1,5 +1,5 @@
 use crate::module_bindings::{
-    DbConnection, PlayerTableAccess, Reducer, RemoteModule, RemoteTables, WorldObjectTableAccess,
+    DbConnection, PlayerTableAccess, RemoteTables, WorldObjectTableAccess,
 };
 use bevy::prelude::*;
 use bevy_spacetimedb::{ReadStdbConnectedMessage, StdbConnection, StdbPlugin};
@@ -10,7 +10,7 @@ pub(super) fn plugin(app: &mut App) {
     app.add_plugins(
         StdbPlugin::default()
             .with_uri("http://127.0.0.1:3000")
-            .with_module_name("example")
+            .with_module_name("jeff")
             .add_table(RemoteTables::player)
             .add_table(RemoteTables::world_object)
             .with_run_fn(DbConnection::run_threaded),
@@ -24,5 +24,6 @@ fn on_connect(mut messages: ReadStdbConnectedMessage, stdb: SpacetimeDB) {
 
         stdb.subscription_builder()
             .subscribe(vec!["SELECT * FROM player", "SELECT * FROM world_object"]);
+        println!("Subscriptions created");
     }
 }

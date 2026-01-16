@@ -9,6 +9,6 @@ edition = "2024"
 crate-type = ["cdylib"]
 
 [dependencies]
-spacetimedb = "1.11.*"
-log = "0.4"
+spacetimedb = { workspace = true }
+log = { workspace = true }
 backend = { path = "../../backend" }

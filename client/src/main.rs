@@ -4,6 +4,7 @@ mod infinite_grid;
 mod module_bindings;
 mod spacetimedb;
 mod ui;
+mod world_object;
 
 use bevy::asset::AssetPlugin;
 use bevy::prelude::*;
@@ -27,6 +28,7 @@ fn main() {
         .insert_resource(config)
         .add_plugins((
             spacetimedb::plugin,
+            world_object::plugin,
             default_plugins,
             ui::plugin,
             infinite_grid::plugin,
