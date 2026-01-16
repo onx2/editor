@@ -10,16 +10,18 @@ use bevy::{
     render::render_resource::BlendState,
     utils::default,
 };
-use bevy_egui::{EguiGlobalSettings, EguiPlugin, EguiPrimaryContextPass, PrimaryEguiContext};
+use bevy_egui::{EguiGlobalSettings, EguiPlugin, PrimaryEguiContext};
 
 pub fn plugin(app: &mut App) {
     // Register egui once, from a central place.
     // All performance-related UI is owned by `ui/performance`.
-    app.add_plugins((EguiPlugin::default(), performance::plugin));
+    app.add_plugins((
+        EguiPlugin::default(),
+        performance::plugin,
+        app_bar::plugin,
+        asset_browser::plugin,
+    ));
     app.add_systems(Startup, setup);
-
-    // Render panels in the egui pass schedule so the pass state is initialized.
-    app.add_systems(EguiPrimaryContextPass, app_bar::render);
 }
 
 fn setup(mut commands: Commands, mut egui_global_settings: ResMut<EguiGlobalSettings>) {

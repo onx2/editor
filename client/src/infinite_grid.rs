@@ -50,18 +50,11 @@ const Z_AXIS_COLOR: Color = Color::srgb(0.2, 0.2, 1.0);
 pub(super) fn plugin(app: &mut App) {
     app.init_resource::<InfiniteGridEnabled>();
     app.add_plugins(InfiniteGridPlugin);
-    app.add_systems(Startup, (spawn_infinite_grid, spawn_grid_scale_overlay));
-    app.add_systems(Update, (toggle_grid_hotkey, update_grid_scale_overlay));
+    app.add_systems(Startup, spawn_infinite_grid);
 }
 
 fn spawn_infinite_grid(mut commands: Commands) {
     commands.spawn(InfiniteGridBundle::default());
-}
-
-fn toggle_grid_hotkey(keys: Res<ButtonInput<KeyCode>>, mut enabled: ResMut<InfiniteGridEnabled>) {
-    if keys.just_pressed(KeyCode::KeyG) {
-        enabled.0 = !enabled.0;
-    }
 }
 
 struct InfiniteGridPlugin;
@@ -194,17 +187,6 @@ struct GridPlaneUniform {
 
 #[derive(Debug, ShaderType)]
 struct GridDisplaySettingsUniform {
-    // WGSL expects this exact layout (see `assets/shaders/infinite_grid.wgsl`):
-    // struct GridSettings {
-    //   scale: f32,
-    //   dist_fadeout_const: f32,
-    //   dot_fadeout_const: f32,
-    //   x_axis_color: vec3,
-    //   z_axis_color: vec3,
-    //   grid_line_color: vec4,
-    //   axis_alpha: f32,
-    // }
-    //
     // If this struct's fields don't match the WGSL struct, the shader will read garbage
     // and the grid can disappear entirely.
     scale: f32,
@@ -223,7 +205,6 @@ struct GridDisplaySettingsUniform {
 impl GridDisplaySettingsUniform {
     fn from_settings(settings: &InfiniteGridSettings) -> Self {
         Self {
-            // 1m == 1 Bevy unit, so scale is just 1.0.
             scale: 1.0,
             dist_fadeout_const: 1.0 / settings.fadeout_distance.max(0.0001),
             // Keep the existing WGSL behavior: angle-based fade factor.
@@ -679,55 +660,4 @@ fn queue_grids(
             });
         }
     }
-}
-
-#[derive(Component)]
-struct GridScaleOverlay;
-
-fn spawn_grid_scale_overlay(mut commands: Commands) {
-    commands.spawn((
-        GridScaleOverlay,
-        Text::new("Grid: ?"),
-        TextFont {
-            font_size: 14.0,
-            ..default()
-        },
-        TextColor(Color::srgb(0.92, 0.92, 0.92)),
-        Node {
-            position_type: PositionType::Absolute,
-            left: Val::Px(12.0),
-            bottom: Val::Px(12.0),
-            ..default()
-        },
-    ));
-}
-
-fn update_grid_scale_overlay(
-    mut q_text: Single<&mut Text, With<GridScaleOverlay>>,
-    flycam_transform: Single<&GlobalTransform, With<FlyCam>>,
-) {
-    // Plane is y=0 in this editor.
-    let h = flycam_transform.translation().y.abs();
-    fn smoothstep(edge0: f32, edge1: f32, x: f32) -> f32 {
-        let t = ((x - edge0) / (edge1 - edge0)).clamp(0.0, 1.0);
-        t * t * (3.0 - 2.0 * t)
-    }
-
-    // Shader bias: t' = t^2
-    fn bias_75_25(t: f32) -> f32 {
-        t * t
-    }
-
-    // Dominance cutoff: show the "next" scale only when it is >= ~75%.
-    let dominance_cutoff = 0.75;
-
-    let scale_label = if h < 90.0 {
-        let t = bias_75_25(smoothstep(5.0, 90.0, h));
-        if t >= dominance_cutoff { "10m" } else { "1m" }
-    } else {
-        let t = bias_75_25(smoothstep(40.0, 600.0, h));
-        if t >= dominance_cutoff { "100m" } else { "10m" }
-    };
-
-    q_text.0 = format!("Grid: {}", scale_label);
 }

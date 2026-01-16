@@ -51,6 +51,7 @@ fn clamp_ms(v: f32) -> f32 {
 
 pub(super) fn plugin(app: &mut App) {
     app.init_resource::<FpsDebug>();
+    app.init_resource::<PerformanceUiState>();
     app.add_plugins(FrameTimeDiagnosticsPlugin::default());
     app.add_systems(PreUpdate, tick);
     app.add_systems(EguiPrimaryContextPass, render);
@@ -75,6 +76,17 @@ pub struct FpsDebug {
 
     /// Internal: how many ticks have occurred (used to print periodically).
     pub frame_counter: u64,
+}
+
+#[derive(Resource)]
+pub struct PerformanceUiState {
+    pub visible: bool,
+}
+
+impl Default for PerformanceUiState {
+    fn default() -> Self {
+        Self { visible: false }
+    }
 }
 
 impl Default for FpsDebug {
@@ -127,8 +139,13 @@ fn render(
     diagnostics: Res<DiagnosticsStore>,
     time: Res<Time>,
     fps_debug: Res<FpsDebug>,
+    perf_ui: Res<PerformanceUiState>,
     mut cache: Local<PerfWindowCache>,
 ) {
+    if !perf_ui.visible {
+        return;
+    }
+
     let ctx = contexts.ctx_mut().expect("to get primary egui context");
 
     cache.next_refresh_in = cache.next_refresh_in.saturating_sub(time.delta());
