@@ -6,7 +6,7 @@ use bevy_egui::{EguiContexts, EguiPrimaryContextPass, egui};
 
 use crate::ui::asset_browser::AssetBrowserUiState;
 use crate::ui::performance::PerformanceUiState;
-use crate::ui::transform_tools::ActiveTransformTool;
+use crate::ui::transform_tools::TransformTool;
 
 pub(super) fn plugin(app: &mut App) {
     // Render panels in the egui pass schedule so the pass state is initialized.
@@ -19,7 +19,7 @@ fn render(
     perf_ui: ResMut<PerformanceUiState>,
     asset_browser_ui: ResMut<AssetBrowserUiState>,
     grid_enabled: ResMut<crate::infinite_grid::InfiniteGridEnabled>,
-    mut active_tool: ResMut<ActiveTransformTool>,
+    mut active_tool: ResMut<TransformTool>,
 ) {
     let ctx = contexts.ctx_mut().expect("to get primary egui context");
 

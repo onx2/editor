@@ -5,14 +5,14 @@
 //!
 //! This module provides:
 //! - `TransformToolMode` enum (Translate/Rotate/Scale)
-//! - `ActiveTransformTool` resource (current mode)
+//! - `TransformTool` resource: `{ selected_tool, is_active }`
 //! - an egui toolbar renderer suitable for placing in the top app bar
-//! - W/E/R hotkeys to switch mode
+//! - W/E/R hotkeys to switch mode (disabled while a drag interaction is active)
 //!
-//! Integration notes (wiring this into your existing UI):
-//! - Add this module under `client/src/ui/mod.rs` (e.g. `mod transform_tools;` and add its plugin).
-//! - Call `transform_tools::render_toolbar(ui, active_tool)` from `ui/app_bar/mod.rs` where you want it.
-//! - Use `Res<ActiveTransformTool>` from gameplay/interaction systems to decide which drag behavior to apply.
+//! Tool locking:
+//! - While a transform drag interaction is active, switching tools is disabled.
+//! - The interaction system should set `TransformTool.is_active = true` on `DragStart`
+//!   and set it back to `false` on `DragEnd` (after saving).
 
 use bevy::prelude::*;
 use bevy_egui::{EguiContexts, egui};
@@ -20,15 +20,10 @@ use bevy_egui::{EguiContexts, egui};
 use crate::flycam::FlyCamActive;
 
 pub(super) fn plugin(app: &mut App) {
-    app.init_resource::<ActiveTransformTool>();
+    app.init_resource::<TransformTool>();
 
     // Hotkeys are handled in Update so it works regardless of egui pass scheduling.
     app.add_systems(Update, handle_hotkeys);
-
-    // Optional: if you want this module to render its own panel, you can enable the system below.
-    // For now, we expose `render_toolbar(...)` so the app bar can host it.
-    //
-    // app.add_systems(EguiPrimaryContextPass, render_panel);
 }
 
 /// Equivalent to Unreal's widget mode (Translate/Rotate/Scale).
@@ -58,69 +53,85 @@ impl TransformToolMode {
     }
 }
 
-/// Global editor state: which transform tool is currently active.
+/// Global editor state for transform tools.
+///
+/// `selected_tool` is the currently selected tool.
+/// `is_active` means "a drag interaction is currently using the selected tool"
+/// and tool switching must be disabled until the interaction ends.
+///
+/// The interaction system (object dragging) should:
+/// - set `is_active = true` on `DragStart`
+/// - set `is_active = false` on `DragEnd` (after saving)
 #[derive(Resource, Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ActiveTransformTool {
-    pub mode: TransformToolMode,
+pub struct TransformTool {
+    pub selected_tool: TransformToolMode,
+    pub is_active: bool,
 }
 
-impl Default for ActiveTransformTool {
+impl Default for TransformTool {
     fn default() -> Self {
         Self {
-            mode: TransformToolMode::Translate,
+            selected_tool: TransformToolMode::Translate,
+            is_active: false,
         }
     }
 }
 
 /// Render a compact, single-select button group (toggle group) for the transform tools.
 /// Call this from your top app bar UI.
-pub fn render_toolbar(ui: &mut egui::Ui, active: &mut ActiveTransformTool) {
-    // This uses `selectable_label` which behaves like a toggle, and we enforce exclusivity by
-    // setting `active.mode` when clicked.
+///
+/// While `TransformTool.is_active == true`, buttons are disabled.
+pub fn render_toolbar(ui: &mut egui::Ui, tool: &mut TransformTool) {
+    let disabled = tool.is_active;
+
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 6.0;
 
-        tool_button(ui, active, TransformToolMode::Translate);
-        tool_button(ui, active, TransformToolMode::Rotate);
-        tool_button(ui, active, TransformToolMode::Scale);
+        tool_button(ui, tool, TransformToolMode::Translate, disabled);
+        tool_button(ui, tool, TransformToolMode::Rotate, disabled);
+        tool_button(ui, tool, TransformToolMode::Scale, disabled);
     });
 }
 
-fn tool_button(ui: &mut egui::Ui, active: &mut ActiveTransformTool, mode: TransformToolMode) {
-    let selected = active.mode == mode;
+fn tool_button(
+    ui: &mut egui::Ui,
+    tool: &mut TransformTool,
+    mode: TransformToolMode,
+    disabled: bool,
+) {
+    let selected = tool.selected_tool == mode;
 
-    // Text-only for now; later you can swap to icons.
-    // We include the hotkey hint to match the "editor muscle memory" vibe.
     let text = format!("{} ({})", mode.label(), mode.hotkey());
 
-    if ui.selectable_label(selected, text).clicked() {
-        active.mode = mode;
+    let resp = ui.add_enabled(!disabled, egui::Button::new(text).selected(selected));
+    if resp.clicked() {
+        tool.selected_tool = mode;
     }
 }
 
-/// Handle W/E/R hotkeys to switch the active transform tool.
+/// Handle W/E/R hotkeys to switch the selected transform tool.
 ///
-/// This matches Unreal defaults:
-/// - W = Translate
-/// - E = Rotate
-/// - R = Scale
+/// Disabled while:
+/// - flycam is active
+/// - egui is interacting
+/// - a transform drag interaction is active (`TransformTool.is_active == true`)
 fn handle_hotkeys(
     keys: Res<ButtonInput<KeyCode>>,
     flycam_active: Res<FlyCamActive>,
-    mut active: ResMut<ActiveTransformTool>,
+    mut tool: ResMut<TransformTool>,
     mut contexts: EguiContexts,
 ) {
+    // Disable tool switching while a transform interaction is active.
+    if tool.is_active {
+        return;
+    }
+
     // Gate editor tool hotkeys while flycam is active to avoid conflicts.
-    // Single source of truth lives in `flycam::FlyCamActive`.
     if flycam_active.0 {
         return;
     }
 
-    // Also gate hotkeys while egui wants keyboard input (typing in text fields, etc.)
-    // or pointer input (dragging sliders, clicking UI).
-    //
-    // Note: `EguiContexts::ctx_mut()` returns a `Result`, not an `Option`.
-    // If there's no primary context for some reason, we just skip this gate.
+    // Also gate hotkeys while egui wants keyboard input (typing) or pointer input (dragging/clicking UI).
     if let Ok(ctx) = contexts.ctx_mut() {
         if ctx.wants_keyboard_input() || ctx.wants_pointer_input() {
             return;
@@ -128,18 +139,17 @@ fn handle_hotkeys(
     }
 
     if keys.just_pressed(KeyCode::KeyW) {
-        active.mode = TransformToolMode::Translate;
+        tool.selected_tool = TransformToolMode::Translate;
     } else if keys.just_pressed(KeyCode::KeyE) {
-        active.mode = TransformToolMode::Rotate;
+        tool.selected_tool = TransformToolMode::Rotate;
     } else if keys.just_pressed(KeyCode::KeyR) {
-        active.mode = TransformToolMode::Scale;
+        tool.selected_tool = TransformToolMode::Scale;
     }
 }
 
 /// Optional standalone panel renderer (not currently used).
-/// Kept here if you decide you want an always-visible toolbar without editing the existing app bar.
 #[allow(dead_code)]
-fn render_panel(mut contexts: EguiContexts, mut active: ResMut<ActiveTransformTool>) {
+fn render_panel(mut contexts: EguiContexts, mut tool: ResMut<TransformTool>) {
     let ctx = contexts.ctx_mut().expect("to get primary egui context");
 
     egui::TopBottomPanel::top("transform_tools_panel")
@@ -147,7 +157,7 @@ fn render_panel(mut contexts: EguiContexts, mut active: ResMut<ActiveTransformTo
         .exact_height(32.0)
         .show(ctx, |ui| {
             ui.horizontal_centered(|ui| {
-                render_toolbar(ui, &mut active);
+                render_toolbar(ui, &mut tool);
                 ui.add_space(ui.available_width());
             });
         });

@@ -1,8 +1,11 @@
 use crate::{
+    flycam::FlyCamActive,
     module_bindings::{
         AssetKind, CollisionShape, WorldObject, insert_object, move_object, rotate_object,
+        scale_object,
     },
     spacetimedb::SpacetimeDB,
+    ui::transform_tools::{TransformTool, TransformToolMode},
 };
 use bevy::prelude::*;
 use bevy_spacetimedb::ReadInsertMessage;
@@ -48,7 +51,8 @@ fn on_insert(
 
                 commands
                     .spawn((SceneRoot(scene_handle), transform, ObjectId(row.id)))
-                    .observe(on_drag_rotate)
+                    .observe(on_drag_start)
+                    .observe(on_drag_transform)
                     .observe(on_drag_end);
             }
             _ => {
@@ -93,44 +97,129 @@ fn spawn_alien_on_key0(keys: Res<ButtonInput<KeyCode>>, stdb: SpacetimeDB) {
     let _ = stdb.reducers().insert_object(object);
 }
 
-fn on_drag_rotate(drag: On<Pointer<Drag>>, mut objects: Query<(&mut Transform, &ObjectId)>) {
-    let Ok((mut transform, _id)) = objects.get_mut(drag.entity) else {
+fn on_drag_start(
+    drag: On<Pointer<DragStart>>,
+    tool: ResMut<TransformTool>,
+    flycam_active: Res<FlyCamActive>,
+) {
+    // Never begin a transform interaction while flycam is active.
+    if flycam_active.0 {
+        return;
+    }
+
+    // Lock tool switching for the duration of the drag gesture.
+    // We don't allow changing selected tool while active, so `selected_tool` is effectively the locked tool.
+    let mut tool = tool;
+    tool.is_active = true;
+
+    // Note: we intentionally do not read/modify the entity here.
+    // DragStart is only used to lock the tool mode.
+    let _ = drag.entity;
+}
+
+fn on_drag_transform(
+    drag: On<Pointer<Drag>>,
+    mut objects: Query<&mut Transform>,
+    tool: Res<TransformTool>,
+    flycam_active: Res<FlyCamActive>,
+) {
+    // Never manipulate objects while flycam is active.
+    if flycam_active.0 {
+        return;
+    }
+
+    // Only apply transforms while an interaction is active.
+    // (Drag events should normally only arrive while dragging, but this keeps the state model tight.)
+    if !tool.is_active {
+        return;
+    }
+
+    let Ok(mut transform) = objects.get_mut(drag.entity) else {
         return;
     };
+
+    let mode = tool.selected_tool;
 
     // Provided by your drag event
     let delta: Vec2 = drag.delta;
 
-    // Tune to taste: radians per pixel.
-    // Start around 0.01–0.02.
-    let sensitivity = 0.01;
+    match mode {
+        TransformToolMode::Rotate => {
+            // Tune to taste: radians per pixel.
+            let sensitivity = 0.01;
 
-    // Turntable:
-    // - horizontal drag => yaw about global up
-    // - vertical drag => pitch about object's local right
-    //
-    // NOTE: If your world is Z-up (like Unreal), change Vec3::Y to Vec3::Z.
-    let yaw = -delta.x * sensitivity;
-    let pitch = -delta.y * sensitivity;
+            // Turntable:
+            // - horizontal drag => yaw about global up
+            // - vertical drag => pitch about object's local right
+            //
+            // NOTE: If your world is Z-up (like Unreal), change Vec3::Y to Vec3::Z.
+            let yaw = -delta.x * sensitivity;
+            let pitch = -delta.y * sensitivity;
 
-    let q_yaw = Quat::from_axis_angle(Vec3::Y, yaw);
-    let q_pitch = Quat::from_axis_angle(transform.right().into(), pitch);
+            let q_yaw = Quat::from_axis_angle(Vec3::Y, yaw);
+            let q_pitch = Quat::from_axis_angle(transform.right().into(), pitch);
 
-    // Apply incremental rotation
-    transform.rotation = (q_yaw * q_pitch) * transform.rotation;
+            transform.rotation = (q_yaw * q_pitch) * transform.rotation;
+        }
+        TransformToolMode::Translate => {
+            // Simple screen-space -> world XZ plane mapping:
+            // - drag right => +X
+            // - drag up => -Z
+            //
+            // This is a placeholder until you implement camera-relative plane projection.
+            let sensitivity = 0.01; // world units per pixel
+            transform.translation.x += delta.x * sensitivity;
+            transform.translation.z += -delta.y * sensitivity;
+        }
+        TransformToolMode::Scale => {
+            // Simple uniform scale:
+            // - drag right/up increases, left/down decreases
+            let sensitivity = 0.01; // scale delta per pixel
+            let ds = (delta.x - delta.y) * sensitivity;
+
+            let mut new_scale = transform.scale + Vec3::splat(ds);
+            // Prevent negative/zero scale
+            new_scale = new_scale.max(Vec3::splat(0.001));
+            transform.scale = new_scale;
+        }
+    }
 }
 
 fn on_drag_end(
     drag: On<Pointer<DragEnd>>,
     objects: Query<(&Transform, &ObjectId)>,
     stdb: SpacetimeDB,
+    tool: ResMut<TransformTool>,
+    flycam_active: Res<FlyCamActive>,
 ) {
-    if let Ok((transform, id)) = objects.get(drag.entity) {
-        let _ = stdb
-            .reducers()
-            .rotate_object(id.0, transform.rotation.into());
-        let _ = stdb
-            .reducers()
-            .move_object(id.0, transform.translation.into());
+    // If flycam is active, we shouldn't have been manipulating; ensure we unlock.
+    let mut tool = tool;
+    if flycam_active.0 {
+        tool.is_active = false;
+        return;
     }
+
+    if let Ok((transform, id)) = objects.get(drag.entity) {
+        // Save only what matches the selected/active tool.
+        // Since tool switching is disabled while `is_active == true`,
+        // `selected_tool` is effectively the locked tool for this gesture.
+        match tool.selected_tool {
+            TransformToolMode::Rotate => {
+                let _ = stdb
+                    .reducers()
+                    .rotate_object(id.0, transform.rotation.into());
+            }
+            TransformToolMode::Translate => {
+                let _ = stdb
+                    .reducers()
+                    .move_object(id.0, transform.translation.into());
+            }
+            TransformToolMode::Scale => {
+                let _ = stdb.reducers().scale_object(id.0, transform.scale.into());
+            }
+        }
+    }
+
+    // Unlock tool switching after we've saved.
+    tool.is_active = false;
 }

@@ -1,7 +1,7 @@
 mod app_bar;
 mod asset_browser;
 mod performance;
-mod transform_tools;
+pub mod transform_tools;
 
 use bevy::{
     app::{App, Startup},
