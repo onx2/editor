@@ -21,7 +21,5 @@ pub fn identity_connected(ctx: &ReducerContext) {
 
 #[spacetimedb::reducer(client_disconnected)]
 pub fn identity_disconnected(ctx: &ReducerContext) {
-    let Some(p) = ctx.db.player().identity().find(ctx.sender) else {
-        return;
-    };
+    ctx.db.player().identity().delete(ctx.sender);
 }

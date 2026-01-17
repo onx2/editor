@@ -1950,17 +1950,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "client"
-version = "0.1.0"
-dependencies = [
- "bevy",
- "bevy_egui",
- "bevy_spacetimedb",
- "dotenvy",
- "spacetimedb-sdk",
-]
-
-[[package]]
 name = "clipboard-win"
 version = "5.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2492,6 +2481,17 @@ checksum = "71ddb8ac7643d1dba1bb02110e804406dd459a838efcb14011ced10556711a8e"
 dependencies = [
  "bytemuck",
  "emath",
+]
+
+[[package]]
+name = "editor"
+version = "0.1.0"
+dependencies = [
+ "bevy",
+ "bevy_egui",
+ "bevy_spacetimedb",
+ "dotenvy",
+ "spacetimedb-sdk",
 ]
 
 [[package]]
