@@ -1,6 +1,7 @@
 mod app_bar;
 mod asset_browser;
 mod performance;
+mod transform_tools;
 
 use bevy::{
     app::{App, Startup},
@@ -19,6 +20,7 @@ pub fn plugin(app: &mut App) {
         EguiPlugin::default(),
         performance::plugin,
         app_bar::plugin,
+        transform_tools::plugin,
         asset_browser::plugin,
     ));
     app.add_systems(Startup, setup);

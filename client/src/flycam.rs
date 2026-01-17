@@ -7,7 +7,7 @@ use bevy::{
         message::MessageReader,
         query::With,
         resource::Resource,
-        system::{Commands, Res, Single},
+        system::{Commands, Res, ResMut, Single},
     },
     input::{
         ButtonInput,
@@ -23,9 +23,18 @@ use bevy::{
     window::{CursorGrabMode, CursorOptions, PrimaryWindow},
 };
 
+use bevy_egui::EguiContexts;
+
 pub(super) fn plugin(app: &mut App) {
     app.init_resource::<FlyCamSettings>();
+    app.init_resource::<FlyCamActive>();
+
     app.add_systems(Startup, spawn_camera);
+
+    // Compute flycam active state once per frame so other systems (editor hotkeys, gizmos, etc.)
+    // can gate behavior consistently without duplicating input logic.
+    app.add_systems(Update, update_flycam_active);
+
     app.add_systems(
         Update,
         (
@@ -62,8 +71,6 @@ pub struct FlyCamSettings {
     pub trackpad_pixels_per_scroll: f32,
     /// Pitch clamp to avoid gimbal flips.
     pub max_pitch_radians: f32,
-    /// If true, you must hold RMB to look/move (and we will lock/hide the cursor); if false, always active.
-    pub require_rmb: bool,
 }
 
 impl Default for FlyCamSettings {
@@ -78,12 +85,46 @@ impl Default for FlyCamSettings {
             // Higher values make trackpad zoom faster.
             trackpad_pixels_per_scroll: 1024.0,
             max_pitch_radians: 1.54, // ~88 degrees
-            require_rmb: true,
         }
     }
 }
 
 const CAMERA_OFFSET_GLOBAL: Vec3 = Vec3::new(0.0, 25.0, -10.0);
+
+/// Global "is flycam active" state for the current frame.
+/// Treat this as the single source of truth for gating editor hotkeys and interactions.
+///
+/// Unreal-style behavior: flycam is "captured" on RMB just_pressed (only if not over UI),
+/// and released on RMB just_released.
+#[derive(Resource, Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct FlyCamActive(pub bool);
+
+fn update_flycam_active(
+    buttons: Res<ButtonInput<MouseButton>>,
+    mut active: ResMut<FlyCamActive>,
+    mut contexts: EguiContexts,
+) {
+    // Is the pointer currently over any egui UI (even hover)?
+    let pointer_over_egui = contexts
+        .ctx_mut()
+        .map(|ctx| ctx.is_pointer_over_area())
+        .unwrap_or(false);
+
+    // Only begin flycam if the RMB press started outside UI.
+    if buttons.just_pressed(MouseButton::Right) {
+        active.0 = !pointer_over_egui;
+    }
+
+    // Always stop flycam when RMB is released.
+    if buttons.just_released(MouseButton::Right) {
+        active.0 = false;
+    }
+
+    // Safety: if RMB isn't held (e.g. focus loss), flycam can't be active.
+    if !buttons.pressed(MouseButton::Right) {
+        active.0 = false;
+    }
+}
 
 fn spawn_camera(mut commands: Commands) {
     // World camera
@@ -110,27 +151,23 @@ fn spawn_camera(mut commands: Commands) {
     ));
 }
 
-fn flycam_is_active(buttons: Res<ButtonInput<MouseButton>>, settings: Res<FlyCamSettings>) -> bool {
-    if !settings.require_rmb {
-        return true;
-    }
-    buttons.pressed(MouseButton::Right)
+fn flycam_is_active(active: Res<FlyCamActive>) -> bool {
+    active.0
 }
 
 fn flycam_toggle_capture(
     buttons: Res<ButtonInput<MouseButton>>,
-    settings: Res<FlyCamSettings>,
+    flycam_active: Res<FlyCamActive>,
     mut cursor: Single<&mut CursorOptions, With<PrimaryWindow>>,
 ) {
-    if !settings.require_rmb {
-        return;
-    }
-
-    if buttons.just_pressed(MouseButton::Right) {
+    // Capture/hide cursor only when flycam is actually active.
+    // This prevents RMB on top of egui UI from locking/hiding the cursor.
+    if buttons.just_pressed(MouseButton::Right) && flycam_active.0 {
         cursor.grab_mode = CursorGrabMode::Locked;
         cursor.visible = false;
     }
 
+    // Always release on RMB up (safe even if we never captured).
     if buttons.just_released(MouseButton::Right) {
         cursor.grab_mode = CursorGrabMode::None;
         cursor.visible = true;

@@ -6,6 +6,7 @@ use bevy_egui::{EguiContexts, EguiPrimaryContextPass, egui};
 
 use crate::ui::asset_browser::AssetBrowserUiState;
 use crate::ui::performance::PerformanceUiState;
+use crate::ui::transform_tools::ActiveTransformTool;
 
 pub(super) fn plugin(app: &mut App) {
     // Render panels in the egui pass schedule so the pass state is initialized.
@@ -18,6 +19,7 @@ fn render(
     perf_ui: ResMut<PerformanceUiState>,
     asset_browser_ui: ResMut<AssetBrowserUiState>,
     grid_enabled: ResMut<crate::infinite_grid::InfiniteGridEnabled>,
+    mut active_tool: ResMut<ActiveTransformTool>,
 ) {
     let ctx = contexts.ctx_mut().expect("to get primary egui context");
 
@@ -29,6 +31,9 @@ fn render(
                 egui::MenuBar::new().ui(ui, |ui| {
                     file_menu::render(ui, exit);
                     view_menu::render(ui, perf_ui, asset_browser_ui, grid_enabled);
+
+                    ui.separator();
+                    crate::ui::transform_tools::render_toolbar(ui, &mut active_tool);
 
                     // Fill the rest of the bar so it visually spans the full width.
                     ui.add_space(ui.available_width());
