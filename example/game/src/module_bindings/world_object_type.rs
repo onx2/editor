@@ -4,6 +4,7 @@
 #![allow(unused, clippy::all)]
 use spacetimedb_sdk::__codegen::{self as __sdk, __lib, __sats, __ws};
 
+use super::asset_kind_type::AssetKind;
 use super::collision_shape_type::CollisionShape;
 use super::quat_type::Quat;
 use super::vec_3_type::Vec3;
@@ -12,7 +13,7 @@ use super::vec_3_type::Vec3;
 #[sats(crate = __lib)]
 pub struct WorldObject {
     pub id: u64,
-    pub asset_path: Option<String>,
+    pub asset: AssetKind,
     pub translation: Vec3,
     pub rotation: Quat,
     pub scale: Vec3,

@@ -2,6 +2,7 @@
 // WILL NOT BE SAVED. MODIFY TABLES IN YOUR MODULE SOURCE CODE INSTEAD.
 
 #![allow(unused, clippy::all)]
+use super::asset_kind_type::AssetKind;
 use super::collision_shape_type::CollisionShape;
 use super::quat_type::Quat;
 use super::vec_3_type::Vec3;

@@ -4,22 +4,20 @@
 #![allow(unused, clippy::all)]
 use spacetimedb_sdk::__codegen::{self as __sdk, __lib, __sats, __ws};
 
-use super::asset_kind_type::AssetKind;
-use super::collision_shape_type::CollisionShape;
-use super::quat_type::Quat;
-use super::vec_3_type::Vec3;
+use super::ball_type::Ball;
+use super::capsule_type::Capsule;
+use super::cuboid_type::Cuboid;
 
 #[derive(__lib::ser::Serialize, __lib::de::Deserialize, Clone, PartialEq, Debug)]
 #[sats(crate = __lib)]
-pub struct WorldObject {
-    pub id: u64,
-    pub asset: AssetKind,
-    pub translation: Vec3,
-    pub rotation: Quat,
-    pub scale: Vec3,
-    pub collision_shape: CollisionShape,
+pub enum PrimitiveShape {
+    Cuboid(Cuboid),
+
+    Ball(Ball),
+
+    Capsule(Capsule),
 }
 
-impl __sdk::InModule for WorldObject {
+impl __sdk::InModule for PrimitiveShape {
     type Module = super::RemoteModule;
 }
