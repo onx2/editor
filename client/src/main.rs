@@ -1,5 +1,6 @@
 mod config;
 mod flycam;
+mod gizmo;
 mod infinite_grid;
 mod module_bindings;
 mod spacetimedb;
@@ -31,6 +32,7 @@ fn main() {
         spacetimedb::plugin,
         world_object::plugin,
         default_plugins,
+        gizmo::plugin,
         MeshPickingPlugin,
         ui::plugin,
         infinite_grid::plugin,
